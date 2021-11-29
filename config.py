@@ -1,11 +1,10 @@
 import torch
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from pathlib import Path
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-TRAIN_DIR = Path("data/train").resolve()
-VAL_DIR = Path("data/val").resolve()
+TRAIN_DIR = "data/train"
+VAL_DIR = "data/val"
 BATCH_SIZE = 1
 LEARNING_RATE = 1e-5
 LAMBDA_IDENTITY = 0.0
@@ -14,10 +13,10 @@ NUM_WORKERS = 4
 NUM_EPOCHS = 8
 LOAD_MODEL = True
 SAVE_MODEL = True
-CHECKPOINT_GEN_H = Path("genh.pth.tar")
-CHECKPOINT_GEN_Z = Path("genz.pth.tar")
-CHECKPOINT_CRITIC_H = Path("critich.pth.tar")
-CHECKPOINT_CRITIC_Z = Path("criticz.pth.tar")
+CHECKPOINT_GEN_N = "genn.pth.tar"
+CHECKPOINT_GEN_D = "genz.pth.tar"
+CHECKPOINT_CRITIC_N = "criticn.pth.tar"
+CHECKPOINT_CRITIC_D = "criticd.pth.tar"
 
 transforms = A.Compose(
     [

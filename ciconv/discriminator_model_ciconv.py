@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from ciconv2d import CIConv2d
+from ciconv.ciconv2d import CIConv2d
 
 class Block(nn.Module):
     def __init__(self, in_channels, out_channels, stride):
