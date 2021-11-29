@@ -6,18 +6,18 @@ import torch.nn as nn
 import torch.optim as optim
 import config
 from torchvision.utils import save_image
-from regular.discriminator_model import Discriminator as Discriminator_reg
+from no_ciconv.discriminator_model import Discriminator as Discriminator_reg
 from ciconv.discriminator_model_ciconv import Discriminator as Discriminator_ciconv
-from regular.generator_model import Generator as Generator
+from no_ciconv.generator_model import Generator as Generator
 import sys
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler):
+def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
     N_reals = 0
     N_fakes = 0
 
     for idx, (day, night) in enumerate(loader):
-        print('Dataset: {}/{}'.format(idx + 1, len(loader.dataset)))
+        print(f"Dataset: {idx + 1}/{len(loader.dataset)}")
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
 
@@ -39,7 +39,7 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             D_D_fake_loss = mse(D_D_fake, torch.zeros_like(D_D_fake))
             D_D_loss = D_D_real_loss + D_D_fake_loss
 
-            # put it togethor
+            # put it together
             D_loss = (D_N_loss + D_D_loss) / 2
 
         opt_disc.zero_grad()
@@ -83,10 +83,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         g_scaler.update()
 
         if idx % 200 == 0:
-            save_image(fake_day * 0.5 + 0.5, f"saved_images/day_{idx}.png")
-            save_image(fake_night * 0.5 + 0.5, f"saved_images/night_{idx}.png")
+            save_image(fake_day * 0.5 + 0.5, f"{base_path}/saved_images/day_{idx}.png")
+            save_image(fake_night * 0.5 + 0.5, f"{base_path}/saved_images/night_{idx}.png")
 
-        print('N_real={}'.format(N_reals / (idx + 1)), 'N_fake={}'.format(N_fakes / (idx + 1)))
+        print(f"N_real={N_reals / (idx + 1)}", f"N_fake={N_fakes / (idx + 1)}")
 
 
 def main(use_ciconv):
@@ -110,7 +110,7 @@ def main(use_ciconv):
     L1 = nn.L1Loss()
     mse = nn.MSELoss()
 
-    base_path = "ciconv/" if use_ciconv else "regular/"
+    base_path = "ciconv/" if use_ciconv else "no_ciconv/"
     checkpoint_files = [config.CHECKPOINT_GEN_N, config.CHECKPOINT_GEN_D, config.CHECKPOINT_CRITIC_N,
                         config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
@@ -120,8 +120,8 @@ def main(use_ciconv):
             load_checkpoint(base_path + "checkpoints/" + checkpoint_files[i], models[i], opt_gen, config.LEARNING_RATE)
 
     dataset = DayNightDataset(
-        root_day=config.TRAIN_DIR + "/day",
-        root_night=config.TRAIN_DIR + "/night",
+        root_day=config.TRAIN_DIR + "/day_dark_zurich",
+        root_night=config.TRAIN_DIR + "/night_dark_zurich",
         transform=config.transforms
     )
     # val_dataset = DayNightDataset(
@@ -146,8 +146,8 @@ def main(use_ciconv):
     d_scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(config.NUM_EPOCHS):
-        print('Epoch: {}/{}'.format(epoch + 1, config.NUM_EPOCHS))
-        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler)
+        print(f"Epoch: {epoch + 1}/{config.NUM_EPOCHS}")
+        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
 
         if config.SAVE_MODEL:
             optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
@@ -156,6 +156,7 @@ def main(use_ciconv):
 
 
 if __name__ == "__main__":
-    useCiconv = sys.argv[0]
-    assert isinstance(useCiconv, bool)
-    main(useCiconv)
+    disc_is_ciconv = sys.argv[1]
+    assert disc_is_ciconv.lower() in ["true", "false"]
+    use_ciconv = True if disc_is_ciconv.lower() == "true" else False
+    main(use_ciconv)

@@ -3,6 +3,7 @@ import os
 from torch.utils.data import Dataset
 import numpy as np
 
+
 class DayNightDataset(Dataset):
     def __init__(self, root_day, root_night, transform=None):
         self.root_day = root_day
@@ -34,8 +35,3 @@ class DayNightDataset(Dataset):
             night_img = augmentations["image0"]
 
         return day_img, night_img
-
-
-
-
-
