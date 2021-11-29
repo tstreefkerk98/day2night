@@ -1,3 +1,5 @@
+from matplotlib import pyplot as plt
+
 import config
 from dataset import DayNightDataset
 from torchvision.utils import save_image
@@ -5,7 +7,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 
 
-def resize_dataset(dataset, size=256):
+def resize_dataset(dataset, size=256, keep_dimensions=True):
     loader = DataLoader(
         dataset,
         batch_size=config.BATCH_SIZE,
@@ -14,14 +16,19 @@ def resize_dataset(dataset, size=256):
         pin_memory=True
     )
     resize = transforms.Compose([transforms.Resize((size, size))])
-    # i = 0
-    for idx, (day, night) in enumerate(loader):
-        # if i > 5:
-        #     break
-        zebra_res = resize(day)
-        horse_res = resize(night)
-        save_image(zebra_res, f"data/day/day_{idx}.jpg")
-        save_image(horse_res, f"data/night/night_{idx}.jpg")
+    print(type(loader.dataset[0]))
+    print(len(loader.dataset[0]))
+    print([([len(b) for b in a]) for a in loader.dataset[0]])
+    # print(loader.dataset[0][0])
+
+    i = 0
+    # for idx, (day, night) in enumerate(loader):
+    #     if i > 5:
+    #         break
+        # day_res = resize(day)
+        # night_res = resize(night)
+        # save_image(day_res, f"data/day/day_{idx}.jpg")
+        # save_image(night_res, f"data/night/night_{idx}.jpg")
         # i += 1
 
 
@@ -31,7 +38,6 @@ def main():
         root_night=config.TRAIN_DIR + "/night",
         transform=config.transforms
     )
-
     resize_dataset(dataset)
 
 
