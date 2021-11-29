@@ -1,15 +1,15 @@
 import torch
-from dataset import DayNightDataset
-from utils import save_checkpoint, load_checkpoint
-from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
 import config
+import sys
+from dataset import DayNightDataset
+from utils import save_checkpoint, load_checkpoint
+from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from no_ciconv.discriminator_model import Discriminator as Discriminator_reg
 from ciconv.discriminator_model_ciconv import Discriminator as Discriminator_ciconv
 from no_ciconv.generator_model import Generator as Generator
-import sys
 
 
 def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
@@ -124,17 +124,6 @@ def main(use_ciconv):
         root_night=config.TRAIN_DIR + "/night",
         transform=config.transforms
     )
-    # val_dataset = DayNightDataset(
-    #     root_day=base_path + "cyclegan_test/day",
-    #     root_night=base_path + "cyclegan_test/night",
-    #     transform=config.transforms
-    # )
-    # val_loader = DataLoader(
-    #     val_dataset,
-    #     batch_size=1,
-    #     shuffle=False,
-    #     pin_memory=True,
-    # )
     loader = DataLoader(
         dataset,
         batch_size=config.BATCH_SIZE,
@@ -156,7 +145,6 @@ def main(use_ciconv):
 
 
 if __name__ == "__main__":
-    disc_is_ciconv = sys.argv[1]
-    assert disc_is_ciconv.lower() in ["true", "false"]
-    use_ciconv = True if disc_is_ciconv.lower() == "true" else False
-    main(use_ciconv)
+    disc_uses_ciconv = sys.argv[1]
+    assert disc_uses_ciconv.lower() in ["true", "false"]
+    main(eval(disc_uses_ciconv.title()))

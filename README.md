@@ -15,6 +15,4 @@ A large part of the code has been copied and altered to fit the day-night domain
   booktitle={Computer Vision (ICCV), 2017 IEEE International Conference on},
   year={2017}
 }
-
-
 ```
