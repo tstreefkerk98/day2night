@@ -83,8 +83,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         g_scaler.update()
 
         if idx % 200 == 0:
-            save_image(fake_day * 0.5 + 0.5, f"{base_path}/saved_images/day_{idx}.png")
-            save_image(fake_night * 0.5 + 0.5, f"{base_path}/saved_images/night_{idx}.png")
+            save_image(fake_day * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/day_{idx}.png")
+            save_image(fake_night * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/night_{idx}.png")
 
         print(f"N_real={N_reals / (idx + 1)}", f"N_fake={N_fakes / (idx + 1)}")
 
@@ -120,8 +120,8 @@ def main(use_ciconv):
             load_checkpoint(base_path + "checkpoints/" + checkpoint_files[i], models[i], opt_gen, config.LEARNING_RATE)
 
     dataset = DayNightDataset(
-        root_day=config.TRAIN_DIR + "/day_dark_zurich",
-        root_night=config.TRAIN_DIR + "/night_dark_zurich",
+        root_day=config.TRAIN_DIR + "/day",
+        root_night=config.TRAIN_DIR + "/night",
         transform=config.transforms
     )
     # val_dataset = DayNightDataset(

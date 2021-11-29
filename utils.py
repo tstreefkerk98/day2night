@@ -1,8 +1,10 @@
-import random, torch, os, numpy as np
-import torch.nn as nn
+import numpy as np
+import os
+import random
+import torch
 import config
-import copy
 from pathlib import Path
+
 
 def save_checkpoint(model, optimizer, filename=Path("my_checkpoint.pth.tar")):
     print("=> Saving checkpoint")
@@ -34,3 +36,9 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def get_images(train_folder):
+    return [Path(os.path.join(root, name)).resolve()
+            for root, _, files in os.walk(config.TRAIN_DIR + "/" + train_folder)
+            for name in files]

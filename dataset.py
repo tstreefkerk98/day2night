@@ -1,7 +1,8 @@
-from PIL import Image
 import os
-from torch.utils.data import Dataset
 import numpy as np
+import utils
+from PIL import Image
+from torch.utils.data import Dataset
 
 
 class DayNightDataset(Dataset):
@@ -10,9 +11,9 @@ class DayNightDataset(Dataset):
         self.root_night = root_night
         self.transform = transform
 
-        self.day_images = os.listdir(root_day)
-        self.night_images = os.listdir(root_night)
-        self.length_dataset = max(len(self.day_images), len(self.night_images))  # 1000, 1500
+        self.day_images = utils.get_images("day")
+        self.night_images = utils.get_images("night")
+        self.length_dataset = max(len(self.day_images), len(self.night_images))
         self.day_len = len(self.day_images)
         self.night_len = len(self.night_images)
 
