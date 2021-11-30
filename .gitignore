@@ -131,5 +131,7 @@ dmypy.json
 # Images
 data/train/day/*
 data/train/night/*
+data/train_original/day/*
+data/train_original/night/*
 
 .idea/

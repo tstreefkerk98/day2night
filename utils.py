@@ -38,7 +38,7 @@ def seed_everything(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def get_images(train_folder):
+def get_images(train_folder, resize):
     return [Path(os.path.join(root, name)).resolve()
-            for root, _, files in os.walk(config.TRAIN_DIR + "/" + train_folder)
+            for root, _, files in os.walk(config.TRAIN_DIR + ("_original/" if resize else "/") + train_folder)
             for name in files]

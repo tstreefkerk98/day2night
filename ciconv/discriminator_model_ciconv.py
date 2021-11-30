@@ -23,6 +23,7 @@ class Discriminator(nn.Module):
         in_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
+            # Potential location to add batch normalization
             nn.LeakyReLU(0.2, inplace=True),
         )
 

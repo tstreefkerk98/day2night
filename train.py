@@ -90,6 +90,18 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
 
 
 def main(use_ciconv):
+    print(
+        "Train settings:\n"
+        f"BATCH_SIZE: {config.BATCH_SIZE}\n"
+        f"LEARNING_RATE: {config.LEARNING_RATE}\n"
+        f"LAMBDA_IDENTITY: {config.LAMBDA_IDENTITY}\n"
+        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
+        f"NUM_WORKERS: {config.NUM_WORKERS}\n"
+        f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
+        f"LOAD_MODEL: {config.LOAD_MODEL}\n"
+        f"SAVE_MODEL: {config.SAVE_MODEL}\n\n"
+    )
+
     Discriminator = Discriminator_ciconv if use_ciconv else Discriminator_reg
     disc_N = Discriminator(in_channels=3).to(config.DEVICE)
     disc_D = Discriminator(in_channels=3).to(config.DEVICE)

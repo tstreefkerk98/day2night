@@ -6,13 +6,13 @@ from torch.utils.data import Dataset
 
 
 class DayNightDataset(Dataset):
-    def __init__(self, root_day, root_night, transform=None):
+    def __init__(self, root_day, root_night, transform=None, resize=False):
         self.root_day = root_day
         self.root_night = root_night
         self.transform = transform
 
-        self.day_images = utils.get_images("day")
-        self.night_images = utils.get_images("night")
+        self.day_images = utils.get_images("day", resize)
+        self.night_images = utils.get_images("night", resize)
         self.length_dataset = max(len(self.day_images), len(self.night_images))
         self.day_len = len(self.day_images)
         self.night_len = len(self.night_images)
