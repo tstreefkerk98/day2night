@@ -129,9 +129,6 @@ dmypy.json
 .pyre/
 
 # Images
-data/train/day/*
-data/train/night/*
-data/train_original/day/*
-data/train_original/night/*
+data/*
 
 .idea/

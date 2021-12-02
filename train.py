@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -17,7 +19,7 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
     N_fakes = 0
 
     for idx, (day, night) in enumerate(loader):
-        print(f"Dataset: {idx + 1}/{len(loader.dataset)}")
+        print(f"Batch: {idx + 1}/{len(loader)}")
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
 
@@ -127,7 +129,8 @@ def main(use_ciconv):
                         config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
 
-    if config.LOAD_MODEL:
+    # if config.LOAD_MODEL:
+    if len(os.listdir(base_path + "checkpoints")) != 0:
         for i in range(len(checkpoint_files)):
             load_checkpoint(base_path + "checkpoints/" + checkpoint_files[i], models[i], opt_gen, config.LEARNING_RATE)
 

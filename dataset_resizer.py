@@ -1,27 +1,35 @@
-import random
 import sys
 import utils
 from PIL import Image
 
 
-def scale_image_dimensions(img_urls, scale):
-    path = random.choice(img_urls)
-    width, height = Image.open(path).size
-    return tuple(int(dim / scale) for dim in (width, height))
+def make_image_square(img):
+    color = "black"
+    width, height = img.size
+    if width == height:
+        return img
+    elif width > height:
+        result = Image.new(img.mode, (width, width), color)
+        result.paste(img, (0, (width - height) // 2))
+        return result
+    else:
+        result = Image.new(img.mode, (height, height), color)
+        result.paste(img, ((height - width) // 2, 0))
+        return result
 
 
-def resize_dataset(scale):
+def resize_dataset(img_size):
     for day_part in ["day", "night"]:
         img_urls = utils.get_images(day_part, resize=True)
-        dimension = scale_image_dimensions(img_urls, scale)
         for idx, img_url in enumerate(img_urls):
+            dest = "even" if idx % 2 == 0 else "uneven"
             img = Image.open(img_url)
-            img = img.resize(dimension)
-            img.save(f"data/train/{day_part}/{day_part}_{idx}.png")
+            img = make_image_square(img)
+            img = img.resize((img_size, img_size))
+            img.save(f"data/train/{day_part}_{dest}/{day_part}_{idx}.png")
 
 
 if __name__ == "__main__":
-    scale = eval(sys.argv[1])
-    assert isinstance(scale, (int, float))
-    assert scale >= 1
-    resize_dataset(scale)
+    img_size = eval(sys.argv[1])
+    assert isinstance(img_size, int)
+    resize_dataset(img_size)
