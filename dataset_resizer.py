@@ -22,11 +22,10 @@ def resize_dataset(img_size):
     for day_part in ["day", "night"]:
         img_urls = utils.get_images(day_part, resize=True)
         for idx, img_url in enumerate(img_urls):
-            dest = "even" if idx % 2 == 0 else "uneven"
             img = Image.open(img_url)
-            img = make_image_square(img)
+            # img = make_image_square(img)
             img = img.resize((img_size, img_size))
-            img.save(f"data/train/{day_part}_{dest}/{day_part}_{idx}.png")
+            img.save(f"data/train/{day_part}/{day_part}_{idx}.png")
 
 
 if __name__ == "__main__":

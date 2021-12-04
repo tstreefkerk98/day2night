@@ -131,4 +131,13 @@ dmypy.json
 # Images
 data/*
 
+no_ciconv/generated_images/*
+ciconv/generated_images/*
+
+no_ciconv/saved_images_no_ciconv/*
+ciconv/saved_images_ciconv/*
+
+no_ciconv/checkpoints/*
+ciconv/checkpoints/*
+
 .idea/

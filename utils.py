@@ -3,6 +3,7 @@ import os
 import random
 import torch
 import config
+import datetime
 from pathlib import Path
 
 
@@ -42,3 +43,19 @@ def get_images(train_folder, resize):
     return [Path(os.path.join(root, name)).resolve()
             for root, _, files in os.walk(config.TRAIN_DIR + ("_original/" if resize else "/") + train_folder)
             for name in files]
+
+
+def get_time():
+    return datetime.datetime.now()
+
+
+def print_date_time(time):
+    return time.strftime("%m/%d/%Y, %H:%M:%S")
+
+
+def print_duration(difference, task):
+    duration_in_s = difference.total_seconds()
+    hours = divmod(duration_in_s, 3600)
+    minutes = divmod(hours[1], 60)
+    seconds = divmod(minutes[1], 1)
+    print(f"{task} duration: {hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds")

@@ -1,17 +1,17 @@
 import os
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import config
 import sys
+import utils
 from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from no_ciconv.discriminator_model import Discriminator as Discriminator_reg
 from ciconv.discriminator_model_ciconv import Discriminator as Discriminator_ciconv
-from no_ciconv.generator_model import Generator as Generator
+from generator_model import Generator as Generator
 
 
 def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
@@ -21,9 +21,11 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
     for idx, (day, night) in enumerate(loader):
         print(f"Batch: {idx + 1}/{len(loader)}")
         day = day.to(config.DEVICE)
+        print("Day: ", day.shape)
         night = night.to(config.DEVICE)
+        # break
 
-        # Train Discriminators H and Z
+        # Train Discriminators N and D
         with torch.cuda.amp.autocast():
             fake_night = gen_N(day)
             D_N_real = disc_N(night)
@@ -49,7 +51,7 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         d_scaler.step(opt_disc)
         d_scaler.update()
 
-        # Train Generators H and Z
+        # Train Generators N and D
         with torch.cuda.amp.autocast():
             # adversarial loss for both generators
             D_N_fake = disc_N(fake_night)
@@ -93,14 +95,14 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
 
 def main(use_ciconv):
     print(
-        "Train settings:\n"
+        f"Training started at {utils.get_time()}\n"
+        "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE: {config.LEARNING_RATE}\n"
         f"LAMBDA_IDENTITY: {config.LAMBDA_IDENTITY}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
-        f"LOAD_MODEL: {config.LOAD_MODEL}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n\n"
     )
 
@@ -128,19 +130,24 @@ def main(use_ciconv):
     checkpoint_files = [config.CHECKPOINT_GEN_N, config.CHECKPOINT_GEN_D, config.CHECKPOINT_CRITIC_N,
                         config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
+    optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
 
-    # if config.LOAD_MODEL:
     if len(os.listdir(base_path + "checkpoints")) != 0:
         for i in range(len(checkpoint_files)):
-            load_checkpoint(base_path + "checkpoints/" + checkpoint_files[i], models[i], opt_gen, config.LEARNING_RATE)
+            load_checkpoint(
+                base_path + "checkpoints/" + checkpoint_files[i],
+                models[i],
+                optimizers[i],
+                config.LEARNING_RATE
+            )
 
     dataset = DayNightDataset(
         root_day=config.TRAIN_DIR + "/day",
         root_night=config.TRAIN_DIR + "/night",
-        transform=config.transforms
+        transform=config.transforms,
     )
     loader = DataLoader(
-        dataset,
+        dataset=dataset,
         batch_size=config.BATCH_SIZE,
         shuffle=True,
         num_workers=config.NUM_WORKERS,
@@ -150,11 +157,14 @@ def main(use_ciconv):
     d_scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(config.NUM_EPOCHS):
-        print(f"Epoch: {epoch + 1}/{config.NUM_EPOCHS}")
+        time = utils.get_time()
+        print(f"Epoch: {epoch + 1}/{config.NUM_EPOCHS}, start time: {utils.print_date_time(time)}")
+
         train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
 
+        utils.print_duration(utils.get_time() - time, "Epoch")
+
         if config.SAVE_MODEL:
-            optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
             for i in range(len(checkpoint_files)):
                 save_checkpoint(models[i], optimizers[i], filename=base_path + "checkpoints/" + checkpoint_files[i])
 
