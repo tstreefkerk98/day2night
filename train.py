@@ -9,24 +9,21 @@ from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from no_ciconv.discriminator_model import Discriminator as Discriminator_reg
-from ciconv.discriminator_model_ciconv import Discriminator as Discriminator_ciconv
+from discriminator_model import Discriminator
 from generator_model import Generator as Generator
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
+def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path,
+             use_ciconv):
     N_reals = 0
     N_fakes = 0
 
     for idx, (day, night) in enumerate(loader):
-        print(f"Batch: {idx + 1}/{len(loader)}")
         day = day.to(config.DEVICE)
-        print("Day: ", day.shape)
         night = night.to(config.DEVICE)
-        # break
 
         # Train Discriminators N and D
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=False):
             fake_night = gen_N(day)
             D_N_real = disc_N(night)
             D_N_fake = disc_N(fake_night.detach())
@@ -52,7 +49,7 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         d_scaler.update()
 
         # Train Generators N and D
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=False):
             # adversarial loss for both generators
             D_N_fake = disc_N(fake_night)
             D_D_fake = disc_D(fake_day)
@@ -66,10 +63,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             cycle_night_loss = l1(night, cycle_night)
 
             # identity loss (remove these for efficiency if you set lambda_identity=0)
-            identity_day = gen_D(day)
-            identity_night = gen_N(night)
-            identity_day_loss = l1(day, identity_day)
-            identity_night_loss = l1(night, identity_night)
+            # identity_day = gen_D(day)
+            # identity_night = gen_N(night)
+            # identity_day_loss = l1(day, identity_day)
+            # identity_night_loss = l1(night, identity_night)
 
             # add all together
             G_loss = (
@@ -77,8 +74,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
                     + loss_G_N
                     + cycle_day_loss * config.LAMBDA_CYCLE
                     + cycle_night_loss * config.LAMBDA_CYCLE
-                    + identity_day_loss * config.LAMBDA_IDENTITY
-                    + identity_night_loss * config.LAMBDA_IDENTITY
+                    # + identity_day_loss * config.LAMBDA_IDENTITY
+                    # + identity_night_loss * config.LAMBDA_IDENTITY
             )
 
         opt_gen.zero_grad()
@@ -90,12 +87,19 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             save_image(fake_day * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/day_{idx}.png")
             save_image(fake_night * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/night_{idx}.png")
 
-        print(f"N_real={N_reals / (idx + 1)}", f"N_fake={N_fakes / (idx + 1)}")
+        num_decimals = 10
+        print("{ "
+              f"'batch': {utils.pad_var(idx + 1, len(str(len(loader))), ' ')}, "
+              f"'N_real': {utils.round_var(N_reals / (idx + 1), num_decimals)}, "
+              f"'N_fake': {utils.round_var(N_fakes / (idx + 1), num_decimals)}" +
+              (f", 'disc_N scale': {utils.round_var(disc_N.ciconv.scale.item(), num_decimals)}, "
+               f"'disc_D scale': {utils.round_var(disc_D.ciconv.scale.item(), num_decimals)}" if use_ciconv else "") +
+              " }, ")
 
 
 def main(use_ciconv):
     print(
-        f"Training started at {utils.get_time()}\n"
+        f"Training started at {utils.get_date_time(utils.get_time())}, {'' if use_ciconv else 'not'} using CIConv\n"
         "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE: {config.LEARNING_RATE}\n"
@@ -103,12 +107,11 @@ def main(use_ciconv):
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
-        f"SAVE_MODEL: {config.SAVE_MODEL}\n\n"
+        f"SAVE_MODEL: {config.SAVE_MODEL}\n"
     )
 
-    Discriminator = Discriminator_ciconv if use_ciconv else Discriminator_reg
-    disc_N = Discriminator(in_channels=3).to(config.DEVICE)
-    disc_D = Discriminator(in_channels=3).to(config.DEVICE)
+    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
+    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
     gen_D = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
     gen_N = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
     opt_disc = optim.Adam(
@@ -158,11 +161,13 @@ def main(use_ciconv):
 
     for epoch in range(config.NUM_EPOCHS):
         time = utils.get_time()
-        print(f"Epoch: {epoch + 1}/{config.NUM_EPOCHS}, start time: {utils.print_date_time(time)}")
+        progress = f"{epoch + 1}/{config.NUM_EPOCHS}"
+        print(f"Epoch: {progress}, batch size: {len(loader)}, start time: {utils.get_date_time(time)}")
 
-        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
+        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path,
+                 use_ciconv)
 
-        utils.print_duration(utils.get_time() - time, "Epoch")
+        utils.print_duration(utils.get_time() - time, "Epoch", progress)
 
         if config.SAVE_MODEL:
             for i in range(len(checkpoint_files)):

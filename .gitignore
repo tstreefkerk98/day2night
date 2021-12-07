@@ -140,4 +140,8 @@ ciconv/saved_images_ciconv/*
 no_ciconv/checkpoints/*
 ciconv/checkpoints/*
 
+compare_images.py
+dataset_resizer.py
+generate_images.py
+
 .idea/

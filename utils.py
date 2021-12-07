@@ -49,13 +49,20 @@ def get_time():
     return datetime.datetime.now()
 
 
-def print_date_time(time):
+def get_date_time(time):
     return time.strftime("%m/%d/%Y, %H:%M:%S")
 
 
-def print_duration(difference, task):
+def print_duration(difference, task, progress):
     duration_in_s = difference.total_seconds()
     hours = divmod(duration_in_s, 3600)
     minutes = divmod(hours[1], 60)
     seconds = divmod(minutes[1], 1)
-    print(f"{task} duration: {hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds")
+    print(f"{task}: {progress} took: {hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds")
+
+
+def round_var(var, num_decimals):
+    return pad_var(str(round(var, num_decimals)), num_decimals + 2, " ")
+
+def pad_var(var, size, pad_char):
+    return str(var).ljust(size, pad_char)

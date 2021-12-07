@@ -6,9 +6,23 @@ import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
+from discriminator_model import Discriminator
 from generator_model import Generator
 from torchvision.utils import save_image
 from random import choice
+
+
+def classify_image():
+    disc = Discriminator(use_ciconv=False).to(config.DEVICE)
+    checkpoint_file = "no_ciconv/checkpoints/criticd.pth.tar"
+    checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE)
+    disc.load_state_dict(checkpoint["state_dict"])
+
+    img_path = "data/train/day/aachen_000000_000019_leftImg8bit.png"
+    img = np.array(Image.open(img_path).convert("RGB"))
+    img = transform(img)["image"][None, :]
+    res = disc(img).detach()
+    mean = res.mean().item()
 
 
 def generate_fake_img():
@@ -21,7 +35,7 @@ def generate_fake_img():
 
     # load image and convert to opposite domain
     (retrieve_path, save_path) = ("day", "day2night") if generate_fake_night else ("night", "night2day")
-    retrieve_folder_path = f"data/train/{retrieve_path}"
+    retrieve_folder_path = f"data/test/{retrieve_path}"
     retrieve_folder_size = len(os.listdir(retrieve_folder_path))
 
     stack = []

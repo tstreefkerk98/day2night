@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from ciconv.ciconv2d import CIConv2d
+from ciconv2d import CIConv2d
 
 
 class Block(nn.Module):
@@ -17,13 +17,13 @@ class Block(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels=3, features=[64, 128, 256, 512]):
+    def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=True):
         super().__init__()
-        self.conv = CIConv2d('W')
-        in_channels = 1
+        if use_ciconv:
+            self.ciconv = CIConv2d('W', k=3, scale=0.0)
+            in_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
-            # Potential location to add batch normalization
             nn.LeakyReLU(0.2, inplace=True),
         )
 
@@ -36,7 +36,8 @@ class Discriminator(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.conv(x)
+        if hasattr(self, "ciconv"):
+            x = self.ciconv(x)
         x = self.initial(x)
         return torch.sigmoid(self.model(x))
 
