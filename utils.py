@@ -61,8 +61,10 @@ def print_duration(difference, task, progress):
     print(f"{task}: {progress} took: {hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds")
 
 
-def round_var(var, num_decimals):
-    return pad_var(str(round(var, num_decimals)), num_decimals + 2, " ")
-
-def pad_var(var, size, pad_char):
-    return str(var).ljust(size, pad_char)
+def format_value(val, size):
+    val = str(val)
+    if len(val) > size:
+        return val[0:size]
+    elif len(val) < size:
+        return val.ljust(size, " ")
+    return val
