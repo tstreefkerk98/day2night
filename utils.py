@@ -64,6 +64,10 @@ def print_duration(difference, task, progress):
 def format_value(val, size):
     val = str(val)
     if len(val) > size:
+        if "e" in val:
+            e_idx = val.index("e")
+            e_power = val[e_idx:]
+            return val[0:(size - len(e_power))] + e_power
         return val[0:size]
     elif len(val) < size:
         return val.ljust(size, " ")
