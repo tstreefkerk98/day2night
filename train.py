@@ -28,11 +28,18 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         # Train Discriminators N and D
         with torch.cuda.amp.autocast(enabled=False):
             fake_night = gen_N(day)
-            D_N_real = disc_N(night)
-            D_N_fake = disc_N(fake_night.detach())
+
+            if idx % 20 == 0 and idx != 0:
+                D_N_real = disc_N(fake_night.detach())
+                D_N_fake = disc_N(night)
+            else:
+                D_N_real = disc_N(night)
+                D_N_fake = disc_N(fake_night.detach())
+
             D_N_real_mean = D_N_real.mean().item()
-            N_reals += D_N_real_mean
             D_N_fake_mean = D_N_fake.mean().item()
+
+            N_reals += D_N_real_mean
             N_fakes += D_N_fake_mean
             D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
             D_N_fake_loss = mse(D_N_fake, torch.zeros_like(D_N_fake))
@@ -85,9 +92,11 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             epoch_idx += 1
             train_output_files[f"epoch_{epoch_idx}"] = {}
 
-        if idx % 10 == 0 or idx + 1 == config.BATCH_SIZE:
-            save_image(fake_day * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/day_{epoch_idx}_{idx}.png")
-            save_image(fake_night * 0.5 + 0.5, f"{base_path}/saved_images_{base_path}/night_{epoch_idx}_{idx}.png")
+        if idx % 500 == 0 or idx + 1 == len(loader):
+            save_image(fake_day * 0.5 + 0.5,
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch_idx}_{idx}.png")
+            save_image(fake_night * 0.5 + 0.5,
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch_idx}_{idx}.png")
 
         save_train_output_values(idx, len(loader), epoch_idx, D_N_real_mean, D_N_fake_mean, N_reals, N_fakes,
                                  D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss,
@@ -133,15 +142,18 @@ def save_train_output_values(batch, batches, epoch_idx, D_N_real_mean, D_N_fake_
 
 
 def main(use_ciconv):
+    training_start_time = utils.get_time()
     print(
-        f"Training started at {utils.get_date_time(utils.get_time())}, {'' if use_ciconv else 'not '}using CIConv\n"
+        f"Training started at {utils.get_date_time(training_start_time)}, {'' if use_ciconv else 'not '}using CIConv\n"
         "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
-        f"LEARNING_RATE: {config.LEARNING_RATE}\n"
+        f"LEARNING_RATE_G: {config.LEARNING_RATE_G}\n"
+        f"LEARNING_RATE_D: {config.LEARNING_RATE_D}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
+        f"LOAD_MODEL: {config.LOAD_MODEL}\n"
     )
 
     disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
@@ -150,13 +162,13 @@ def main(use_ciconv):
     gen_N = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
     opt_disc = optim.Adam(
         list(disc_N.parameters()) + list(disc_D.parameters()),
-        lr=config.LEARNING_RATE,
+        lr=config.LEARNING_RATE_D,
         betas=(0.5, 0.999),
     )
 
     opt_gen = optim.Adam(
         list(gen_D.parameters()) + list(gen_N.parameters()),
-        lr=config.LEARNING_RATE,
+        lr=config.LEARNING_RATE_G,
         betas=(0.5, 0.999),
     )
 
@@ -175,14 +187,15 @@ def main(use_ciconv):
                         config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
     optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
+    learning_rates = [config.LEARNING_RATE_G, config.LEARNING_RATE_G, config.LEARNING_RATE_D, config.LEARNING_RATE_D]
 
-    if len(os.listdir(base_path + "checkpoints")) != 0:
+    if len(os.listdir(base_path + "checkpoints")) != 0 and config.LOAD_MODEL:
         for i in range(len(checkpoint_files)):
             load_checkpoint(
                 base_path + "checkpoints/" + checkpoint_files[i],
                 models[i],
                 optimizers[i],
-                config.LEARNING_RATE
+                learning_rates[i]
             )
 
     dataset = DayNightDataset(
@@ -219,16 +232,27 @@ def main(use_ciconv):
         with open(output_file_path, 'w', encoding='utf-8') as output_file:
             json.dump(train_output_files, output_file, ensure_ascii=False, indent=4)
 
+        if epoch + 1 == config.NUM_EPOCHS:
+            utils.print_duration(utils.get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
+
 
 if __name__ == "__main__":
     disc_uses_ciconv = sys.argv[1]
     assert disc_uses_ciconv.lower() in ["true", "false"]
 
-    learning_rate = eval(sys.argv[2])
-    assert isinstance(learning_rate, float)
-    config.LEARNING_RATE = learning_rate
+    learning_rate_g = eval(sys.argv[2])
+    assert isinstance(learning_rate_g, float)
+    config.LEARNING_RATE_G = learning_rate_g
 
-    train_output_path_tail = sys.argv[3]
+    learning_rate_d = eval(sys.argv[3])
+    assert isinstance(learning_rate_d, float)
+    config.LEARNING_RATE_D = learning_rate_d
+
+    batch_size = eval(sys.argv[4])
+    assert isinstance(batch_size, int)
+    config.BATCH_SIZE = batch_size
+
+    train_output_path_tail = sys.argv[5]
     assert isinstance(train_output_path_tail, str)
 
     main(eval(disc_uses_ciconv.title()))

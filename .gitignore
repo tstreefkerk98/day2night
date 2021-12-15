@@ -143,9 +143,6 @@ ciconv/checkpoints/*
 no_ciconv/training_outputs/*
 ciconv/training_outputs/*
 
-tools/compare_images.py
-tools/dataset_resizer.py
-tools/generate_images.py
-tools/plot_data.py
+tools/*
 
 .idea/
