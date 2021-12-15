@@ -6,6 +6,7 @@ import config
 import sys
 import utils
 import json
+import random
 from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
@@ -29,7 +30,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         with torch.cuda.amp.autocast(enabled=False):
             fake_night = gen_N(day)
 
-            if idx % 20 == 0 and idx != 0:
+            # flip 5% of training labels going into Discriminator
+            if utils.prob(0.05):
                 D_N_real = disc_N(fake_night.detach())
                 D_N_fake = disc_N(night)
             else:
@@ -38,17 +40,28 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
 
             D_N_real_mean = D_N_real.mean().item()
             D_N_fake_mean = D_N_fake.mean().item()
-
             N_reals += D_N_real_mean
             N_fakes += D_N_fake_mean
-            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
+
+            # one sided label smoothing Discriminator Night
+            label_smoothing_tensor_D_N = create_label_smoothing_tensor(D_N_real, 0.9, 1.0)
+            D_N_real_loss = mse(D_N_real, label_smoothing_tensor_D_N)
             D_N_fake_loss = mse(D_N_fake, torch.zeros_like(D_N_fake))
             D_N_loss = D_N_real_loss + D_N_fake_loss
 
             fake_day = gen_D(night)
-            D_D_real = disc_D(day)
-            D_D_fake = disc_D(fake_day.detach())
-            D_D_real_loss = mse(D_D_real, torch.ones_like(D_D_real))
+
+            # flip 5% of training labels going into Discriminator
+            if utils.prob(0.05):
+                D_D_real = disc_D(fake_day.detach())
+                D_D_fake = disc_D(day)
+            else:
+                D_D_real = disc_D(day)
+                D_D_fake = disc_D(fake_day.detach())
+
+            # one sided label smoothing Discriminator Day
+            label_smoothing_tensor_D_D = create_label_smoothing_tensor(D_D_real, 0.9, 1.0)
+            D_D_real_loss = mse(D_D_real, label_smoothing_tensor_D_D)
             D_D_fake_loss = mse(D_D_fake, torch.zeros_like(D_D_fake))
             D_D_loss = D_D_real_loss + D_D_fake_loss
 
@@ -110,11 +123,10 @@ def save_train_output_values(batch, batches, epoch_idx, D_N_real_mean, D_N_fake_
                              loss_G_D, loss_G_N, loss_C_N, loss_C_D,
                              disc_N_scale, disc_D_scale):
     size = 10
-    with torch.cuda.amp.autocast(enabled=False):
-        D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
-        loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
-            map(lambda x: x.mean().item(),
-                [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, loss_C_N, loss_C_D])
+    D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
+    loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
+        map(lambda x: x.mean().item(),
+            [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, loss_C_N, loss_C_D])
 
     train_output_obj = {
         'D_N_real_mean': D_N_real_mean,
@@ -141,6 +153,10 @@ def save_train_output_values(batch, batches, epoch_idx, D_N_real_mean, D_N_fake_
     print(f"Batch: {utils.format_value(batch, len(str(batches)))} =", rounded_output_obj)
 
 
+def create_label_smoothing_tensor(input_tensor, r1, r2):
+    return (r1 - r2) * torch.rand_like(input_tensor) + r2
+
+
 def main(use_ciconv):
     training_start_time = utils.get_time()
     print(
@@ -160,12 +176,12 @@ def main(use_ciconv):
     disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
     gen_D = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
     gen_N = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
+
     opt_disc = optim.Adam(
         list(disc_N.parameters()) + list(disc_D.parameters()),
         lr=config.LEARNING_RATE_D,
         betas=(0.5, 0.999),
     )
-
     opt_gen = optim.Adam(
         list(gen_D.parameters()) + list(gen_N.parameters()),
         lr=config.LEARNING_RATE_G,
@@ -183,8 +199,8 @@ def main(use_ciconv):
             global train_output_files
             train_output_files = json.load(output_file)
 
-    checkpoint_files = [config.CHECKPOINT_GEN_N, config.CHECKPOINT_GEN_D, config.CHECKPOINT_CRITIC_N,
-                        config.CHECKPOINT_CRITIC_D]
+    checkpoint_files = [config.CHECKPOINT_GEN_N, config.CHECKPOINT_GEN_D,
+                        config.CHECKPOINT_CRITIC_N, config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
     optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
     learning_rates = [config.LEARNING_RATE_G, config.LEARNING_RATE_G, config.LEARNING_RATE_D, config.LEARNING_RATE_D]

@@ -72,3 +72,7 @@ def format_value(val, size):
     elif len(val) < size:
         return val.ljust(size, " ")
     return val
+
+
+def prob(p):
+    return random.random() <= p
