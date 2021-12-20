@@ -1,16 +1,20 @@
+import math
 import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision
 import config
 import sys
 import utils
+import env
 import json
-import random
+import wandb
+from PIL import Image
 from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
+from torchvision.utils import save_image, make_grid
 from discriminator_model import Discriminator
 from generator_model import Generator as Generator
 
@@ -43,9 +47,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             N_reals += D_N_real_mean
             N_fakes += D_N_fake_mean
 
+            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
             # one sided label smoothing Discriminator Night
-            label_smoothing_tensor_D_N = create_label_smoothing_tensor(D_N_real, 0.9, 1.0)
-            D_N_real_loss = mse(D_N_real, label_smoothing_tensor_D_N)
+            if D_N_real_loss.mean().item() < 0.1:
+                D_N_real_loss = mse(D_N_real, torch.full_like(D_N_real, 0.9))
             D_N_fake_loss = mse(D_N_fake, torch.zeros_like(D_N_fake))
             D_N_loss = D_N_real_loss + D_N_fake_loss
 
@@ -59,9 +64,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
                 D_D_real = disc_D(day)
                 D_D_fake = disc_D(fake_day.detach())
 
+            D_D_real_loss = mse(D_D_real, torch.ones_like(D_D_real))
             # one sided label smoothing Discriminator Day
-            label_smoothing_tensor_D_D = create_label_smoothing_tensor(D_D_real, 0.9, 1.0)
-            D_D_real_loss = mse(D_D_real, label_smoothing_tensor_D_D)
+            if D_D_real_loss.mean().item() < 0.1:
+                D_D_real_loss = mse(D_D_real, torch.full_like(D_D_real, 0.9))
             D_D_fake_loss = mse(D_D_fake, torch.zeros_like(D_D_fake))
             D_D_loss = D_D_real_loss + D_D_fake_loss
 
@@ -105,29 +111,63 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             epoch_idx += 1
             train_output_files[f"epoch_{epoch_idx}"] = {}
 
-        if idx % 500 == 0 or idx + 1 == len(loader):
+        if idx % math.ceil(len(loader) / 5) == 0 or idx + 1 == len(loader):
             save_image(fake_day * 0.5 + 0.5,
                        f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch_idx}_{idx}.png")
             save_image(fake_night * 0.5 + 0.5,
                        f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch_idx}_{idx}.png")
 
+        D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
+        loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
+            map(lambda x: x.mean().item(),
+                [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, cycle_day_loss,
+                 cycle_night_loss])
+
         save_train_output_values(idx, len(loader), epoch_idx, D_N_real_mean, D_N_fake_mean, N_reals, N_fakes,
-                                 D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss,
-                                 loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss,
+                                 D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean,
+                                 loss_G_D_mean, loss_G_N_mean, loss_C_D_mean, loss_C_N_mean,
                                  disc_N.ciconv.scale.item() if use_ciconv else None,
                                  disc_D.ciconv.scale.item() if use_ciconv else None)
 
+        log_obj = {
+            "Discriminator night real prediction": D_N_real_mean,
+            "Discriminator night fake prediction": D_N_fake_mean,
+            "Discriminator night real loss": D_N_real_loss_mean,
+            "Discriminator night fake loss": D_N_fake_loss_mean,
+            "Discriminator day real loss": D_D_real_loss_mean,
+            "Discriminator day fake loss": D_D_fake_loss_mean,
+            "Loss generator day": loss_G_D_mean,
+            "Loss generator night": loss_G_N_mean,
+            "Cycle loss day": loss_C_D_mean,
+            "Cycle loss night": loss_C_N_mean,
+            # "Real_day": get_wandb_img(day),
+            # "Fake_day": get_wandb_img(fake_day),
+            # "Real_night": get_wandb_img(night),
+            # "Fake_night": get_wandb_img(fake_night),
+            "Epoch": epoch_idx,
+            "Batch": idx
+        }
+
+        if use_ciconv:
+            log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
+            log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
+
+        wandb.log(log_obj)
+
+
+def get_wandb_img(tensor):
+    grid = make_grid(tensor * 0.5 + 0.5)
+    # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+    pil_img = Image.fromarray(ndarr)
+    return wandb.Image(pil_img)
+
 
 def save_train_output_values(batch, batches, epoch_idx, D_N_real_mean, D_N_fake_mean, N_reals, N_fakes,
-                             D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss,
-                             loss_G_D, loss_G_N, loss_C_N, loss_C_D,
+                             D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean,
+                             loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean,
                              disc_N_scale, disc_D_scale):
     size = 10
-    D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
-    loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
-        map(lambda x: x.mean().item(),
-            [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, loss_C_N, loss_C_D])
-
     train_output_obj = {
         'D_N_real_mean': D_N_real_mean,
         'D_N_fake_mean': D_N_fake_mean,
@@ -157,7 +197,7 @@ def create_label_smoothing_tensor(input_tensor, r1, r2):
     return (r1 - r2) * torch.rand_like(input_tensor) + r2
 
 
-def main(use_ciconv):
+def main():
     training_start_time = utils.get_time()
     print(
         f"Training started at {utils.get_date_time(training_start_time)}, {'' if use_ciconv else 'not '}using CIConv\n"
@@ -199,13 +239,15 @@ def main(use_ciconv):
             global train_output_files
             train_output_files = json.load(output_file)
 
-    checkpoint_files = [config.CHECKPOINT_GEN_N, config.CHECKPOINT_GEN_D,
-                        config.CHECKPOINT_CRITIC_N, config.CHECKPOINT_CRITIC_D]
+    checkpoint_files = [train_output_path_tail + "_" + config.CHECKPOINT_GEN_N,
+                        train_output_path_tail + "_" + config.CHECKPOINT_GEN_D,
+                        train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_N,
+                        train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
     optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
     learning_rates = [config.LEARNING_RATE_G, config.LEARNING_RATE_G, config.LEARNING_RATE_D, config.LEARNING_RATE_D]
 
-    if len(os.listdir(base_path + "checkpoints")) != 0 and config.LOAD_MODEL:
+    if config.LOAD_MODEL and dir_contains_checkpoint_files(base_path, checkpoint_files):
         for i in range(len(checkpoint_files)):
             load_checkpoint(
                 base_path + "checkpoints/" + checkpoint_files[i],
@@ -228,6 +270,11 @@ def main(use_ciconv):
     )
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
+
+    wandb.watch(
+        [gen_D, gen_N, disc_N, disc_D],
+        criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
+    )
 
     for epoch in range(config.NUM_EPOCHS):
         time = utils.get_time()
@@ -252,6 +299,10 @@ def main(use_ciconv):
             utils.print_duration(utils.get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
 
 
+def dir_contains_checkpoint_files(base_path, checkpoint_files):
+    return all([os.path.exists(base_path + "checkpoints/" + checkpoint_file) for checkpoint_file in checkpoint_files])
+
+
 if __name__ == "__main__":
     disc_uses_ciconv = sys.argv[1]
     assert disc_uses_ciconv.lower() in ["true", "false"]
@@ -268,7 +319,24 @@ if __name__ == "__main__":
     assert isinstance(batch_size, int)
     config.BATCH_SIZE = batch_size
 
-    train_output_path_tail = sys.argv[5]
+    num_epochs = eval(sys.argv[5])
+    assert isinstance(num_epochs, int)
+    config.NUM_EPOCHS = num_epochs
+
+    train_output_path_tail = sys.argv[6]
     assert isinstance(train_output_path_tail, str)
 
-    main(eval(disc_uses_ciconv.title()))
+    use_ciconv = eval(disc_uses_ciconv.title())
+
+    wandb.login(key=env.WANDB_KEY)
+    wandb.init(project="day2night", entity="tstreefkerk")
+    wandb.config = {
+        "ciconv": use_ciconv,
+        "learning_rate_d": config.LEARNING_RATE_D,
+        "learning_rate_g": config.LEARNING_RATE_G,
+        "epochs": config.NUM_EPOCHS,
+        "batch_size": config.BATCH_SIZE,
+        "file_extension": train_output_path_tail
+    }
+
+    main()

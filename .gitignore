@@ -145,4 +145,8 @@ ciconv/training_outputs/*
 
 tools/*
 
+env.py
+
+wandb/*
+
 .idea/
