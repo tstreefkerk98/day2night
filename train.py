@@ -3,7 +3,6 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
 import config
 import sys
 import utils
@@ -21,8 +20,7 @@ from generator_model import Generator as Generator
 train_output_files = {}
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path,
-             use_ciconv):
+def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
     N_reals = 0
     N_fakes = 0
 
@@ -63,6 +61,9 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             else:
                 D_D_real = disc_D(day)
                 D_D_fake = disc_D(fake_day.detach())
+
+            D_D_real_mean = D_D_real.mean().item()
+            D_D_fake_mean = D_D_fake.mean().item()
 
             D_D_real_loss = mse(D_D_real, torch.ones_like(D_D_real))
             # one sided label smoothing Discriminator Day
@@ -130,16 +131,20 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
                                  disc_D.ciconv.scale.item() if use_ciconv else None)
 
         log_obj = {
+            "Discriminator day real prediction": D_D_real_mean,
+            "Discriminator day fake prediction": D_D_fake_mean,
             "Discriminator night real prediction": D_N_real_mean,
             "Discriminator night fake prediction": D_N_fake_mean,
-            "Discriminator night real loss": D_N_real_loss_mean,
-            "Discriminator night fake loss": D_N_fake_loss_mean,
             "Discriminator day real loss": D_D_real_loss_mean,
             "Discriminator day fake loss": D_D_fake_loss_mean,
+            "Discriminator night real loss": D_N_real_loss_mean,
+            "Discriminator night fake loss": D_N_fake_loss_mean,
+            "Discriminator loss": D_loss,
             "Loss generator day": loss_G_D_mean,
             "Loss generator night": loss_G_N_mean,
             "Cycle loss day": loss_C_D_mean,
             "Cycle loss night": loss_C_N_mean,
+            "Generator loss": G_loss,
             # "Real_day": get_wandb_img(day),
             # "Fake_day": get_wandb_img(fake_day),
             # "Real_night": get_wandb_img(night),
@@ -281,8 +286,7 @@ def main():
         progress = f"{epoch + 1}/{config.NUM_EPOCHS}"
         print(f"Epoch: {progress}, batches: {len(loader)}, start time: {utils.get_date_time(time)}")
 
-        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path,
-                 use_ciconv)
+        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
 
         utils.print_duration(utils.get_time() - time, "Epoch", progress)
 
