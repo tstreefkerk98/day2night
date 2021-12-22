@@ -7,11 +7,12 @@ import datetime
 from pathlib import Path
 
 
-def save_checkpoint(model, optimizer, filename=Path("my_checkpoint.pth.tar")):
+def save_checkpoint(model, optimizer, epoch, filename=Path("my_checkpoint.pth.tar")):
     print("=> Saving checkpoint")
     checkpoint = {
         "state_dict": model.state_dict(),
         "optimizer": optimizer.state_dict(),
+        "epoch": epoch
     }
     torch.save(checkpoint, filename)
 
@@ -21,6 +22,7 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr):
     checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE)
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
+    print(f"=> Current epoch: {checkpoint['epoch'] + 1}")
 
     # If we don't do this then it will just have learning rate of old checkpoint
     # and it will lead to many hours of debugging \:

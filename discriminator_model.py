@@ -9,7 +9,6 @@ class Block(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 4, stride, 1, bias=True, padding_mode="reflect"),
             nn.BatchNorm2d(out_channels),
-            # nn.InstanceNorm2d(out_channels),
             nn.LeakyReLU(0.2, inplace=True),
         )
 
@@ -23,10 +22,6 @@ class Discriminator(nn.Module):
         if use_ciconv:
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             in_channels = 1
-        # self.initial = nn.Sequential(
-        #     nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        # )
         self.initial = nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect")
         self.first_leaky = nn.LeakyReLU(0.2, inplace=True)
 
@@ -43,8 +38,7 @@ class Discriminator(nn.Module):
             x = self.ciconv(x)
         x = self.initial(x)
         x = self.first_leaky(x)
-        # For wasserstein, remove sigmoid
-        return torch.sigmoid(self.model(x))
+        return self.model(x)
 
 
 def test():

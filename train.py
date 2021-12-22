@@ -7,191 +7,155 @@ import config
 import sys
 import utils
 import env
-import json
 import wandb
-from PIL import Image
 from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image, make_grid
+from torchvision.utils import save_image
 from discriminator_model import Discriminator
 from generator_model import Generator as Generator
+from torch.autograd import Variable, grad
 
-train_output_files = {}
+
+def train_disc(disc, real, fake, opt_disc, d_scaler):
+    with torch.cuda.amp.autocast(enabled=False):
+        # predictions
+        disc_real = disc(real)
+        disc_fake = disc(fake.detach())
+
+        disc_real_pred = disc_real.mean().item()
+        disc_fake_pred = disc_fake.mean().item()
+
+        # gradient penalty
+        disc_gradients = compute_gradient_penalty(disc, real, fake)
+        disc_gradient_penalty = 10 * ((disc_gradients.norm(2, dim=1) - 1) ** 2).mean()
+
+        # add all together
+        disc_loss = -torch.mean(disc_real) + torch.mean(disc_fake) + disc_gradient_penalty
+        print(-torch.mean(disc_real), torch.mean(disc_fake), disc_gradient_penalty)
+
+    opt_disc.zero_grad()
+    d_scaler.scale(disc_loss).backward()
+    d_scaler.step(opt_disc)
+    d_scaler.update()
+
+    return disc_real_pred, disc_fake_pred, disc_loss, disc_gradient_penalty
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
-    N_reals = 0
-    N_fakes = 0
+def train_gen(gen_D, gen_N, disc_N, disc_D,
+              night, fake_night, day, fake_day,
+              l1, opt_gen, g_scaler):
+    with torch.cuda.amp.autocast(enabled=False):
+        # adversarial losses
+        D_N_fake = disc_N(fake_night)
+        D_D_fake = disc_D(fake_day)
+        loss_G_N = -torch.mean(D_N_fake)
+        loss_G_D = -torch.mean(D_D_fake)
 
+        # cycle losses
+        cycle_day = gen_D(fake_night)
+        cycle_night = gen_N(fake_day)
+        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE
+        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE
+
+        # add all together
+        G_loss = (
+                loss_G_D
+                + loss_G_N
+                + cycle_day_loss
+                + cycle_night_loss
+        )
+
+    opt_gen.zero_grad()
+    g_scaler.scale(G_loss).backward()
+    g_scaler.step(opt_gen)
+    g_scaler.update()
+
+    return loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss, G_loss
+
+
+def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, l1, d_scaler, g_scaler,
+             base_path, epoch):
     for idx, (day, night) in enumerate(loader):
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
 
-        # Train Discriminators N and D
         with torch.cuda.amp.autocast(enabled=False):
             fake_night = gen_N(day)
-
-            # flip 5% of training labels going into Discriminator
-            if utils.prob(0.05):
-                D_N_real = disc_N(fake_night.detach())
-                D_N_fake = disc_N(night)
-            else:
-                D_N_real = disc_N(night)
-                D_N_fake = disc_N(fake_night.detach())
-
-            D_N_real_mean = D_N_real.mean().item()
-            D_N_fake_mean = D_N_fake.mean().item()
-            N_reals += D_N_real_mean
-            N_fakes += D_N_fake_mean
-
-            # D_N_real_loss = mse(D_N_real - D_N_fake, torch.ones_like(D_N_real))
-            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
-            # one sided label smoothing Discriminator Night
-            if D_N_real_loss.mean().item() < 0.1:
-                D_N_real_loss = mse(D_N_real, torch.full_like(D_N_real, 0.9))
-            D_N_fake_loss = mse(D_N_fake, torch.zeros_like(D_N_fake))
-            D_N_loss = D_N_real_loss + D_N_fake_loss
-
             fake_day = gen_D(night)
 
-            # flip 5% of training labels going into Discriminator
-            if utils.prob(0.05):
-                D_D_real = disc_D(fake_day.detach())
-                D_D_fake = disc_D(day)
-            else:
-                D_D_real = disc_D(day)
-                D_D_fake = disc_D(fake_day.detach())
+        # Train Discriminators
+        D_N_real_pred, D_N_fake_pred, D_N_loss, D_N_gradient_penalty = \
+            train_disc(disc_N, night, fake_night, opt_disc_N, d_scaler)
 
-            D_D_real_mean = D_D_real.mean().item()
-            D_D_fake_mean = D_D_fake.mean().item()
+        D_D_real_pred, D_D_fake_pred, D_D_loss, D_D_gradient_penalty = \
+            train_disc(disc_D, day, fake_day, opt_disc_D, d_scaler)
 
-            D_D_real_loss = mse(D_D_real, torch.ones_like(D_D_real))
-            # one sided label smoothing Discriminator Day
-            if D_D_real_loss.mean().item() < 0.1:
-                D_D_real_loss = mse(D_D_real, torch.full_like(D_D_real, 0.9))
-            D_D_fake_loss = mse(D_D_fake, torch.zeros_like(D_D_fake))
-            D_D_loss = D_D_real_loss + D_D_fake_loss
+        # Train Generators (once every x batches)
+        if idx % 5 == 0 or True:
+            loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss, G_loss = \
+                train_gen(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen, g_scaler)
 
-            # put it together
-            D_loss = (D_N_loss + D_D_loss) / 2
+            loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
+                map(lambda x: x.mean().item(),
+                    [loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss])
 
-        opt_disc.zero_grad()
-        d_scaler.scale(D_loss).backward()
-        d_scaler.step(opt_disc)
-        d_scaler.update()
-
-        # Train Generators N and D
-        with torch.cuda.amp.autocast(enabled=False):
-            # adversarial loss for both generators
-            D_N_fake = disc_N(fake_night)
-            D_D_fake = disc_D(fake_day)
-            loss_G_N = mse(D_N_fake, torch.ones_like(D_N_fake))
-            loss_G_D = mse(D_D_fake, torch.ones_like(D_D_fake))
-
-            # cycle loss
-            cycle_day = gen_D(fake_night)
-            cycle_night = gen_N(fake_day)
-            cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE
-            cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE
-
-            # add all together
-            G_loss = (
-                    loss_G_D
-                    + loss_G_N
-                    + cycle_day_loss
-                    + cycle_night_loss
-            )
-
-        opt_gen.zero_grad()
-        g_scaler.scale(G_loss).backward()
-        if use_ciconv_d:
-            # nn.utils.clip_grad_norm_(disc_D.ciconv.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(disc_N.ciconv.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(gen_D.last.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(gen_N.last.parameters(), 0.5)
-            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
-            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
-        g_scaler.step(opt_gen)
-        g_scaler.update()
-
-        epoch_idx = len(train_output_files) - 1
-        if idx == 0:
-            epoch_idx += 1
-            train_output_files[f"epoch_{epoch_idx}"] = {}
+            log_obj = {
+                "Generator day loss": loss_G_D_mean,
+                "Generator night loss": loss_G_N_mean,
+                "Generator day cycle loss": loss_C_D_mean,
+                "Generator night cycle loss": loss_C_N_mean,
+                "Generators total loss": G_loss
+            }
 
         if idx % math.ceil(len(loader) / 5) == 0 or idx + 1 == len(loader):
             save_image(fake_day * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch_idx}_{idx}.png")
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch}_{idx}.png")
             save_image(fake_night * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch_idx}_{idx}.png")
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch}_{idx}.png")
 
-        D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
-        loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
-            map(lambda x: x.mean().item(),
-                [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, cycle_day_loss,
-                 cycle_night_loss])
+        if "log_obj" not in locals():
+            log_obj = {}
 
-        dy1_dw1 = gen_D.last.weight.grad.mean().item()
-        # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-        dy3_dy2 = disc_D.initial.weight.grad.mean().item()
-        dL_dy3 = D_D_loss
-
-        log_obj = {
-            "Discriminator day real prediction": D_D_real_mean,
-            "Discriminator day fake prediction": D_D_fake_mean,
-            "Discriminator night real prediction": D_N_real_mean,
-            "Discriminator night fake prediction": D_N_fake_mean,
-            "Discriminator day real loss": D_D_real_loss_mean,
-            "Discriminator day fake loss": D_D_fake_loss_mean,
-            "Discriminator night real loss": D_N_real_loss_mean,
-            "Discriminator night fake loss": D_N_fake_loss_mean,
-            "Discriminator loss": D_loss,
-            "Loss generator day": loss_G_D_mean,
-            "Loss generator night": loss_G_N_mean,
-            "Cycle loss day": loss_C_D_mean,
-            "Cycle loss night": loss_C_N_mean,
-            "Generator loss": G_loss,
-            # "Real_day": get_wandb_img(day),
-            # "Fake_day": get_wandb_img(fake_day),
-            # "Real_night": get_wandb_img(night),
-            # "Fake_night": get_wandb_img(fake_night),
-            "Epoch": epoch_idx,
+        log_obj.update({
+            "Discriminator day real prediction": D_D_real_pred,
+            "Discriminator day fake prediction": D_D_fake_pred,
+            "Discriminator night real prediction": D_N_real_pred,
+            "Discriminator night fake prediction": D_N_fake_pred,
+            "Discriminator day loss": D_D_loss,
+            "Discriminator night loss": D_N_loss,
+            "Epoch": epoch,
             "Batch": idx,
             "Generator day last gradient": gen_D.last.weight.grad.mean().item(),
             "Generator night last gradient": gen_N.last.weight.grad.mean().item(),
             "Generator day last gradient abs": torch.abs(gen_D.last.weight.grad).mean().item(),
             "Generator night last gradient abs": torch.abs(gen_N.last.weight.grad).mean().item(),
-            "dy1/dw1": dy1_dw1,
-            "dy3/dy2": dy3_dy2,
-            "dL/dy3": dL_dy3,
-        }
+        })
 
         if use_ciconv_d:
             log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
             log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
-            dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-            log_obj["dy2/dy1"] = dy2_dy1
 
         if use_ciconv_g:
             log_obj["Generator night CIConv scale"] = gen_N.ciconv.scale.item()
             log_obj["Generator day CIConv scale"] = gen_D.ciconv.scale.item()
-            # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-            # log_obj["dy2/dy1"] = dy2_dy1
 
         wandb.log(log_obj)
 
-
-# def get_wandb_img(tensor):
-#     grid = make_grid(tensor * 0.5 + 0.5)
-#     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
-#     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-#     pil_img = Image.fromarray(ndarr)
-#     return wandb.Image(pil_img)
+        if idx % 50 == 0:
+            print(f"Batch {idx} out of {len(loader)} completed")
 
 
-# def create_label_smoothing_tensor(input_tensor, r1, r2):
-#     return (r1 - r2) * torch.rand_like(input_tensor) + r2
+def compute_gradient_penalty(disc, real_images, fake_images):
+    eps = Variable(torch.rand(1), requires_grad=True)
+    eps = eps.expand(real_images.size())
+    eps = eps.to(config.DEVICE)
+    x_tilde = eps * real_images + (1 - eps) * fake_images.detach()
+    x_tilde = x_tilde.to(config.DEVICE)
+    pred_tilde = disc(x_tilde)
+    return grad(outputs=pred_tilde, inputs=x_tilde,
+                grad_outputs=torch.ones(pred_tilde.size()).to(config.DEVICE),
+                create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
 def main():
@@ -201,8 +165,8 @@ def main():
         f"{'' if use_ciconv else 'not '}using CIConv\n"
         "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
-        f"LEARNING_RATE_G: {config.LEARNING_RATE_G}\n"
-        f"LEARNING_RATE_D: {config.LEARNING_RATE_D}\n"
+        f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
+        f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
@@ -212,43 +176,40 @@ def main():
         f"DISCRIMINATOR_CICONV: {use_ciconv_d}\n"
     )
 
+    # Initialise Discriminators and Generators
     disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
     disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
     gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
     gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
 
-    # opt_temp = optim.RMSprop()
-
-    opt_disc = optim.Adam(
-        list(disc_N.parameters()) + list(disc_D.parameters()),
-        lr=config.LEARNING_RATE_D,
-        betas=(0.5, 0.999),
+    # Initialise optimizers
+    opt_disc_N = optim.RMSprop(
+        list(disc_N.parameters()),
+        lr=config.LEARNING_RATE_DISC
     )
-    opt_gen = optim.Adam(
+    opt_disc_D = optim.RMSprop(
+        list(disc_D.parameters()),
+        lr=config.LEARNING_RATE_DISC
+    )
+    opt_gen = optim.RMSprop(
         list(gen_D.parameters()) + list(gen_N.parameters()),
-        lr=config.LEARNING_RATE_G,
-        betas=(0.5, 0.999),
+        lr=config.LEARNING_RATE_GEN
     )
 
+    # Generator cycle loss function
     L1 = nn.L1Loss()
-    mse = nn.MSELoss()
-
-    base_path = "ciconv/" if use_ciconv else "no_ciconv/"
-
-    file_path = f"{base_path}training_outputs/training_output_{train_output_path_tail}.json"
-    if os.path.isfile(file_path):
-        with open(file_path) as output_file:
-            global train_output_files
-            train_output_files = json.load(output_file)
 
     checkpoint_files = [train_output_path_tail + "_" + config.CHECKPOINT_GEN_N,
                         train_output_path_tail + "_" + config.CHECKPOINT_GEN_D,
                         train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_N,
                         train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
-    optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
-    learning_rates = [config.LEARNING_RATE_G, config.LEARNING_RATE_G, config.LEARNING_RATE_D, config.LEARNING_RATE_D]
+    optimizers = [opt_gen, opt_gen, opt_disc_N, opt_disc_D]
+    learning_rates = [config.LEARNING_RATE_GEN, config.LEARNING_RATE_GEN,
+                      config.LEARNING_RATE_DISC, config.LEARNING_RATE_DISC]
 
+    # Load checkpoint
+    base_path = "ciconv/" if use_ciconv else "no_ciconv/"
     if config.LOAD_MODEL and dir_contains_checkpoint_files(base_path, checkpoint_files):
         for i in range(len(checkpoint_files)):
             load_checkpoint(
@@ -278,26 +239,28 @@ def main():
         criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
     )
 
+    # Training loop
     for epoch in range(config.NUM_EPOCHS):
+        # epoch start time
         time = utils.get_time()
         progress = f"{epoch + 1}/{config.NUM_EPOCHS}"
         print(f"Epoch: {progress}, batches: {len(loader)}, start time: {utils.get_date_time(time)}")
 
-        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
+        # train model
+        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, L1, d_scaler, g_scaler,
+                 base_path, epoch)
 
+        # print epoch duration
         utils.print_duration(utils.get_time() - time, "Epoch", progress)
 
+        # save model
         if config.SAVE_MODEL:
             for i in range(len(checkpoint_files)):
-                save_checkpoint(models[i], optimizers[i], filename=base_path + "checkpoints/" + checkpoint_files[i])
+                save_checkpoint(models[i], optimizers[i], epoch,
+                                filename=base_path + "checkpoints/" + checkpoint_files[i])
 
-        output_file_path = \
-            f"{'ciconv' if use_ciconv else 'no_ciconv'}/training_outputs/training_output_{train_output_path_tail}.json"
-        with open(output_file_path, 'w', encoding='utf-8') as output_file:
-            json.dump(train_output_files, output_file, ensure_ascii=False, indent=4)
-
-        if epoch + 1 == config.NUM_EPOCHS:
-            utils.print_duration(utils.get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
+    # Print training time
+    utils.print_duration(utils.get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
 
 
 def dir_contains_checkpoint_files(base_path, checkpoint_files):
@@ -313,11 +276,11 @@ if __name__ == "__main__":
 
     learning_rate_g = eval(sys.argv[3])
     assert isinstance(learning_rate_g, float)
-    config.LEARNING_RATE_G = learning_rate_g
+    config.LEARNING_RATE_GEN = learning_rate_g
 
     learning_rate_d = eval(sys.argv[4])
     assert isinstance(learning_rate_d, float)
-    config.LEARNING_RATE_D = learning_rate_d
+    config.LEARNING_RATE_DISC = learning_rate_d
 
     batch_size = eval(sys.argv[5])
     assert isinstance(batch_size, int)
@@ -335,12 +298,12 @@ if __name__ == "__main__":
     use_ciconv = use_ciconv_d or use_ciconv_g
 
     wandb.login(key=env.WANDB_KEY)
-    wandb.init(project="day2night", entity="tstreefkerk")
+    wandb.init(project="day2night-wasserstein", entity="tstreefkerk")
     wandb.config = {
         "ciconv_d": use_ciconv_d,
         "ciconv_g": use_ciconv_g,
-        "learning_rate_d": config.LEARNING_RATE_D,
-        "learning_rate_g": config.LEARNING_RATE_G,
+        "learning_rate_d": config.LEARNING_RATE_DISC,
+        "learning_rate_g": config.LEARNING_RATE_GEN,
         "epochs": config.NUM_EPOCHS,
         "batch_size": config.BATCH_SIZE,
         "file_extension": train_output_path_tail

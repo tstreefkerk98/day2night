@@ -40,7 +40,6 @@ class Generator(nn.Module):
             img_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
-            # nn.InstanceNorm2d(num_features),
             nn.BatchNorm2d(num_features),
             nn.ReLU(inplace=True),
         )
