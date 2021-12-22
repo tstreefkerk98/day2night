@@ -45,8 +45,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             N_reals += D_N_real_mean
             N_fakes += D_N_fake_mean
 
-            D_N_real_loss = mse(D_N_real - D_N_fake, torch.ones_like(D_N_real))
-            # D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
+            # D_N_real_loss = mse(D_N_real - D_N_fake, torch.ones_like(D_N_real))
+            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
             # one sided label smoothing Discriminator Night
             if D_N_real_loss.mean().item() < 0.1:
                 D_N_real_loss = mse(D_N_real, torch.full_like(D_N_real, 0.9))
@@ -108,8 +108,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         if use_ciconv_d:
             # nn.utils.clip_grad_norm_(disc_D.ciconv.parameters(), 0.5)
             # nn.utils.clip_grad_norm_(disc_N.ciconv.parameters(), 0.5)
-            nn.utils.clip_grad_norm_(gen_D.parameters(), 0.5)
-            nn.utils.clip_grad_norm_(gen_N.parameters(), 0.5)
+            # nn.utils.clip_grad_norm_(gen_D.last.parameters(), 0.5)
+            # nn.utils.clip_grad_norm_(gen_N.last.parameters(), 0.5)
+            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
+            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
         g_scaler.step(opt_gen)
         g_scaler.update()
 
@@ -180,16 +182,16 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         wandb.log(log_obj)
 
 
-def get_wandb_img(tensor):
-    grid = make_grid(tensor * 0.5 + 0.5)
-    # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
-    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-    pil_img = Image.fromarray(ndarr)
-    return wandb.Image(pil_img)
+# def get_wandb_img(tensor):
+#     grid = make_grid(tensor * 0.5 + 0.5)
+#     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
+#     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+#     pil_img = Image.fromarray(ndarr)
+#     return wandb.Image(pil_img)
 
 
-def create_label_smoothing_tensor(input_tensor, r1, r2):
-    return (r1 - r2) * torch.rand_like(input_tensor) + r2
+# def create_label_smoothing_tensor(input_tensor, r1, r2):
+#     return (r1 - r2) * torch.rand_like(input_tensor) + r2
 
 
 def main():
@@ -214,6 +216,8 @@ def main():
     disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
     gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
     gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
+
+    # opt_temp = optim.RMSprop()
 
     opt_disc = optim.Adam(
         list(disc_N.parameters()) + list(disc_D.parameters()),

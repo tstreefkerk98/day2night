@@ -43,6 +43,7 @@ class Discriminator(nn.Module):
             x = self.ciconv(x)
         x = self.initial(x)
         x = self.first_leaky(x)
+        # For wasserstein, remove sigmoid
         return torch.sigmoid(self.model(x))
 
 
