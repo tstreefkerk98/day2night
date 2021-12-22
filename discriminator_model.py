@@ -18,15 +18,17 @@ class Block(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=True):
+    def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=False):
         super().__init__()
         if use_ciconv:
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             in_channels = 1
-        self.initial = nn.Sequential(
-            nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
+        # self.initial = nn.Sequential(
+        #     nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
+        self.initial = nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect")
+        self.first_leaky = nn.LeakyReLU(0.2, inplace=True)
 
         layers = []
         in_channels = features[0]
@@ -40,6 +42,7 @@ class Discriminator(nn.Module):
         if hasattr(self, "ciconv"):
             x = self.ciconv(x)
         x = self.initial(x)
+        x = self.first_leaky(x)
         return torch.sigmoid(self.model(x))
 
 

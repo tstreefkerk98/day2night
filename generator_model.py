@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from ciconv2d import CIConv2d
+
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, down=True, use_act=True, **kwargs):
@@ -31,8 +33,11 @@ class ResidualBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, img_channels, num_features=64, num_residuals=9):
+    def __init__(self, img_channels, num_features=64, num_residuals=9, use_ciconv=False):
         super().__init__()
+        if use_ciconv:
+            self.ciconv = CIConv2d('W', k=3, scale=0.0)
+            img_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
             # nn.InstanceNorm2d(num_features),
@@ -51,10 +56,12 @@ class Generator(nn.Module):
                       output_padding=1),
         ])
 
-        self.last = nn.Conv2d(num_features * 1, img_channels, kernel_size=7, stride=1, padding=3,
+        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3,
                               padding_mode="reflect")
 
     def forward(self, x):
+        if hasattr(self, "ciconv"):
+            x = self.ciconv(x)
         x = self.initial(x)
         for layer in self.down_blocks:
             x = layer(x)

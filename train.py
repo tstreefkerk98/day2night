@@ -45,7 +45,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             N_reals += D_N_real_mean
             N_fakes += D_N_fake_mean
 
-            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
+            D_N_real_loss = mse(D_N_real - D_N_fake, torch.ones_like(D_N_real))
+            # D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
             # one sided label smoothing Discriminator Night
             if D_N_real_loss.mean().item() < 0.1:
                 D_N_real_loss = mse(D_N_real, torch.full_like(D_N_real, 0.9))
@@ -104,6 +105,11 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
 
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
+        if use_ciconv_d:
+            # nn.utils.clip_grad_norm_(disc_D.ciconv.parameters(), 0.5)
+            # nn.utils.clip_grad_norm_(disc_N.ciconv.parameters(), 0.5)
+            nn.utils.clip_grad_norm_(gen_D.parameters(), 0.5)
+            nn.utils.clip_grad_norm_(gen_N.parameters(), 0.5)
         g_scaler.step(opt_gen)
         g_scaler.update()
 
@@ -124,11 +130,10 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
                 [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, cycle_day_loss,
                  cycle_night_loss])
 
-        save_train_output_values(idx, len(loader), epoch_idx, D_N_real_mean, D_N_fake_mean, N_reals, N_fakes,
-                                 D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean,
-                                 loss_G_D_mean, loss_G_N_mean, loss_C_D_mean, loss_C_N_mean,
-                                 disc_N.ciconv.scale.item() if use_ciconv else None,
-                                 disc_D.ciconv.scale.item() if use_ciconv else None)
+        dy1_dw1 = gen_D.last.weight.grad.mean().item()
+        # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
+        dy3_dy2 = disc_D.initial.weight.grad.mean().item()
+        dL_dy3 = D_D_loss
 
         log_obj = {
             "Discriminator day real prediction": D_D_real_mean,
@@ -150,12 +155,27 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             # "Real_night": get_wandb_img(night),
             # "Fake_night": get_wandb_img(fake_night),
             "Epoch": epoch_idx,
-            "Batch": idx
+            "Batch": idx,
+            "Generator day last gradient": gen_D.last.weight.grad.mean().item(),
+            "Generator night last gradient": gen_N.last.weight.grad.mean().item(),
+            "Generator day last gradient abs": torch.abs(gen_D.last.weight.grad).mean().item(),
+            "Generator night last gradient abs": torch.abs(gen_N.last.weight.grad).mean().item(),
+            "dy1/dw1": dy1_dw1,
+            "dy3/dy2": dy3_dy2,
+            "dL/dy3": dL_dy3,
         }
 
-        if use_ciconv:
+        if use_ciconv_d:
             log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
             log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
+            dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
+            log_obj["dy2/dy1"] = dy2_dy1
+
+        if use_ciconv_g:
+            log_obj["Generator night CIConv scale"] = gen_N.ciconv.scale.item()
+            log_obj["Generator day CIConv scale"] = gen_D.ciconv.scale.item()
+            # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
+            # log_obj["dy2/dy1"] = dy2_dy1
 
         wandb.log(log_obj)
 
@@ -168,36 +188,6 @@ def get_wandb_img(tensor):
     return wandb.Image(pil_img)
 
 
-def save_train_output_values(batch, batches, epoch_idx, D_N_real_mean, D_N_fake_mean, N_reals, N_fakes,
-                             D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean,
-                             loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean,
-                             disc_N_scale, disc_D_scale):
-    size = 10
-    train_output_obj = {
-        'D_N_real_mean': D_N_real_mean,
-        'D_N_fake_mean': D_N_fake_mean,
-        'N_real_avg': N_reals / (batch + 1),
-        'N_fake_avg': N_fakes / (batch + 1),
-        'D_N_real_loss_mean': D_N_real_loss_mean,
-        'D_N_fake_loss_mean': D_N_fake_loss_mean,
-        'D_D_real_loss_mean': D_D_real_loss_mean,
-        'D_D_fake_loss_mean': D_D_fake_loss_mean,
-        'loss_G_D_mean': loss_G_D_mean,
-        'loss_G_N_mean': loss_G_N_mean,
-        'loss_C_N_mean': loss_C_N_mean,
-        'loss_C_D_mean': loss_C_D_mean,
-        'D_N_scale': disc_N_scale,
-        'D_D_scale': disc_D_scale
-    }
-
-    train_output_files[f"epoch_{epoch_idx}"][f"batch_{batch}"] = train_output_obj
-
-    keys_to_print = ["D_N_real_mean", "D_N_fake_mean", "N_real_avg", "N_fake_avg", "D_N_scale", "D_D_scale"]
-    rounded_output_obj = {k: train_output_obj[k] for k in keys_to_print}
-    rounded_output_obj = {k: utils.format_value(v, size) for k, v in rounded_output_obj.items()}
-    print(f"Batch: {utils.format_value(batch, len(str(batches)))} =", rounded_output_obj)
-
-
 def create_label_smoothing_tensor(input_tensor, r1, r2):
     return (r1 - r2) * torch.rand_like(input_tensor) + r2
 
@@ -205,7 +195,8 @@ def create_label_smoothing_tensor(input_tensor, r1, r2):
 def main():
     training_start_time = utils.get_time()
     print(
-        f"Training started at {utils.get_date_time(training_start_time)}, {'' if use_ciconv else 'not '}using CIConv\n"
+        f"Training started at {utils.get_date_time(training_start_time)}, "
+        f"{'' if use_ciconv else 'not '}using CIConv\n"
         "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE_G: {config.LEARNING_RATE_G}\n"
@@ -215,12 +206,14 @@ def main():
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
         f"LOAD_MODEL: {config.LOAD_MODEL}\n"
+        f"GENERATOR_CICONV: {use_ciconv_g}\n"
+        f"DISCRIMINATOR_CICONV: {use_ciconv_d}\n"
     )
 
-    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
-    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv).to(config.DEVICE)
-    gen_D = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
-    gen_N = Generator(img_channels=3, num_residuals=9).to(config.DEVICE)
+    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
+    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
+    gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
+    gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
 
     opt_disc = optim.Adam(
         list(disc_N.parameters()) + list(disc_D.parameters()),
@@ -308,34 +301,40 @@ def dir_contains_checkpoint_files(base_path, checkpoint_files):
 
 
 if __name__ == "__main__":
-    disc_uses_ciconv = sys.argv[1]
-    assert disc_uses_ciconv.lower() in ["true", "false"]
+    disc_uses_ciconv_d = sys.argv[1]
+    assert disc_uses_ciconv_d.lower() in ["true", "false"]
 
-    learning_rate_g = eval(sys.argv[2])
+    disc_uses_ciconv_g = sys.argv[2]
+    assert disc_uses_ciconv_g.lower() in ["true", "false"]
+
+    learning_rate_g = eval(sys.argv[3])
     assert isinstance(learning_rate_g, float)
     config.LEARNING_RATE_G = learning_rate_g
 
-    learning_rate_d = eval(sys.argv[3])
+    learning_rate_d = eval(sys.argv[4])
     assert isinstance(learning_rate_d, float)
     config.LEARNING_RATE_D = learning_rate_d
 
-    batch_size = eval(sys.argv[4])
+    batch_size = eval(sys.argv[5])
     assert isinstance(batch_size, int)
     config.BATCH_SIZE = batch_size
 
-    num_epochs = eval(sys.argv[5])
+    num_epochs = eval(sys.argv[6])
     assert isinstance(num_epochs, int)
     config.NUM_EPOCHS = num_epochs
 
-    train_output_path_tail = sys.argv[6]
+    train_output_path_tail = sys.argv[7]
     assert isinstance(train_output_path_tail, str)
 
-    use_ciconv = eval(disc_uses_ciconv.title())
+    use_ciconv_d = eval(disc_uses_ciconv_d.title())
+    use_ciconv_g = eval(disc_uses_ciconv_g.title())
+    use_ciconv = use_ciconv_d or use_ciconv_g
 
     wandb.login(key=env.WANDB_KEY)
     wandb.init(project="day2night", entity="tstreefkerk")
     wandb.config = {
-        "ciconv": use_ciconv,
+        "ciconv_d": use_ciconv_d,
+        "ciconv_g": use_ciconv_g,
         "learning_rate_d": config.LEARNING_RATE_D,
         "learning_rate_g": config.LEARNING_RATE_G,
         "epochs": config.NUM_EPOCHS,
