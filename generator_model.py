@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 
 from ciconv2d import CIConv2d
-
+# from torch.nn import BatchNorm2d as Norm2d
+from torch.nn import InstanceNorm2d as Norm2d
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, down=True, use_act=True, **kwargs):
@@ -11,8 +12,7 @@ class ConvBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, padding_mode="reflect", **kwargs)
             if down
             else nn.ConvTranspose2d(in_channels, out_channels, **kwargs),
-            # nn.InstanceNorm2d(out_channels),
-            nn.BatchNorm2d(out_channels),
+            Norm2d(out_channels),
             nn.ReLU(inplace=True) if use_act else nn.Identity()
         )
 
@@ -40,7 +40,7 @@ class Generator(nn.Module):
             img_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
-            nn.BatchNorm2d(num_features),
+            Norm2d(num_features),
             nn.ReLU(inplace=True),
         )
         self.down_blocks = nn.ModuleList([
@@ -55,8 +55,7 @@ class Generator(nn.Module):
                       output_padding=1),
         ])
 
-        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3,
-                              padding_mode="reflect")
+        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3, padding_mode="reflect")
 
     def forward(self, x):
         if hasattr(self, "ciconv"):

@@ -8,43 +8,43 @@ import sys
 import utils
 import env
 import wandb
+from PIL import Image
 from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
+from torchvision.utils import save_image, make_grid
 from discriminator_model import Discriminator
 from generator_model import Generator as Generator
-from torch.autograd import Variable, grad
+from torch.autograd import grad
 
 
 def train_disc(disc, real, fake, opt_disc, d_scaler):
     with torch.cuda.amp.autocast(enabled=False):
         # predictions
-        disc_real = disc(real)
-        disc_fake = disc(fake.detach())
+        disc_real_pred = -disc(real)
+        disc_fake_pred = disc(fake.detach())
 
-        disc_real_pred = disc_real.mean().item()
-        disc_fake_pred = disc_fake.mean().item()
+        disc_real_pred_mean = torch.mean(disc_real_pred)
+        disc_fake_pred_mean = torch.mean(disc_fake_pred)
 
         # gradient penalty
         disc_gradients = compute_gradient_penalty(disc, real, fake)
-        disc_gradient_penalty = 10 * ((disc_gradients.norm(2, dim=1) - 1) ** 2).mean()
+        disc_gradient_penalty = config.LAMBDA_GRADIENT_PENALTY * ((disc_gradients.norm(2, dim=1) - 1) ** 2).mean()
 
         # add all together
-        disc_loss = -torch.mean(disc_real) + torch.mean(disc_fake) + disc_gradient_penalty
-        print(-torch.mean(disc_real), torch.mean(disc_fake), disc_gradient_penalty)
+        disc_loss = disc_real_pred_mean + disc_fake_pred_mean + disc_gradient_penalty
 
     opt_disc.zero_grad()
     d_scaler.scale(disc_loss).backward()
+    # if use_ciconv_d:
+    #     nn.utils.clip_grad_norm_(disc.ciconv.parameters(), 5)
     d_scaler.step(opt_disc)
     d_scaler.update()
 
-    return disc_real_pred, disc_fake_pred, disc_loss, disc_gradient_penalty
+    return disc_real_pred_mean, disc_fake_pred_mean, disc_loss, disc_gradient_penalty
 
 
-def train_gen(gen_D, gen_N, disc_N, disc_D,
-              night, fake_night, day, fake_day,
-              l1, opt_gen, g_scaler):
+def train_gen(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen, g_scaler):
     with torch.cuda.amp.autocast(enabled=False):
         # adversarial losses
         D_N_fake = disc_N(fake_night)
@@ -92,27 +92,28 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_g
             train_disc(disc_D, day, fake_day, opt_disc_D, d_scaler)
 
         # Train Generators (once every x batches)
-        if idx % 5 == 0 or True:
-            loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss, G_loss = \
+        if idx % 5 == 0:
+            G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss, G_loss = \
                 train_gen(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen, g_scaler)
 
-            loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
+            G_D_loss_mean, G_N_loss_mean, G_N_cycle_loss_mean, G_D_cycle_loss_mean = \
                 map(lambda x: x.mean().item(),
-                    [loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss])
+                    [G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss])
 
             log_obj = {
-                "Generator day loss": loss_G_D_mean,
-                "Generator night loss": loss_G_N_mean,
-                "Generator day cycle loss": loss_C_D_mean,
-                "Generator night cycle loss": loss_C_N_mean,
+                "Generator day loss": G_D_loss_mean,
+                "Generator night loss": G_N_loss_mean,
+                "Generator day cycle loss": G_D_cycle_loss_mean,
+                "Generator night cycle loss": G_N_cycle_loss_mean,
                 "Generators total loss": G_loss
             }
 
         if idx % math.ceil(len(loader) / 5) == 0 or idx + 1 == len(loader):
+            current_epoch = config.CURRENT_EPOCH + epoch
             save_image(fake_day * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch}_{idx}.png")
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{current_epoch}_{idx}.png")
             save_image(fake_night * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch}_{idx}.png")
+                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{current_epoch}_{idx}.png")
 
         if "log_obj" not in locals():
             log_obj = {}
@@ -120,12 +121,12 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_g
         log_obj.update({
             "Discriminator day real prediction": D_D_real_pred,
             "Discriminator day fake prediction": D_D_fake_pred,
+            "Discriminator day gradient penalty": D_D_gradient_penalty,
             "Discriminator night real prediction": D_N_real_pred,
             "Discriminator night fake prediction": D_N_fake_pred,
+            "Discriminator night gradient penalty": D_N_gradient_penalty,
             "Discriminator day loss": D_D_loss,
             "Discriminator night loss": D_N_loss,
-            "Epoch": epoch,
-            "Batch": idx,
             "Generator day last gradient": gen_D.last.weight.grad.mean().item(),
             "Generator night last gradient": gen_N.last.weight.grad.mean().item(),
             "Generator day last gradient abs": torch.abs(gen_D.last.weight.grad).mean().item(),
@@ -141,13 +142,19 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_g
             log_obj["Generator day CIConv scale"] = gen_D.ciconv.scale.item()
 
         wandb.log(log_obj)
+        # wandb.log({
+        #     "Real_day": get_wandb_img(day),
+        #     "Fake_day": get_wandb_img(fake_day),
+        #     "Real_night": get_wandb_img(night),
+        #     "Fake_night": get_wandb_img(fake_night),
+        # })
 
         if idx % 50 == 0:
             print(f"Batch {idx} out of {len(loader)} completed")
 
 
 def compute_gradient_penalty(disc, real_images, fake_images):
-    eps = Variable(torch.rand(1), requires_grad=True)
+    eps = torch.rand(1, requires_grad=True)
     eps = eps.expand(real_images.size())
     eps = eps.to(config.DEVICE)
     x_tilde = eps * real_images + (1 - eps) * fake_images.detach()
@@ -156,6 +163,14 @@ def compute_gradient_penalty(disc, real_images, fake_images):
     return grad(outputs=pred_tilde, inputs=x_tilde,
                 grad_outputs=torch.ones(pred_tilde.size()).to(config.DEVICE),
                 create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+
+def get_wandb_img(tensor):
+    grid = make_grid(tensor * 0.5 + 0.5)
+    # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+    pil_img = Image.fromarray(ndarr)
+    return wandb.Image(pil_img)
 
 
 def main():
@@ -168,6 +183,7 @@ def main():
         f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
         f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
+        f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
@@ -183,17 +199,20 @@ def main():
     gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
 
     # Initialise optimizers
-    opt_disc_N = optim.RMSprop(
+    opt_disc_N = optim.Adam(
         list(disc_N.parameters()),
-        lr=config.LEARNING_RATE_DISC
+        lr=config.LEARNING_RATE_DISC,
+        betas=(0.5, 0.9),
     )
-    opt_disc_D = optim.RMSprop(
+    opt_disc_D = optim.Adam(
         list(disc_D.parameters()),
-        lr=config.LEARNING_RATE_DISC
+        lr=config.LEARNING_RATE_DISC,
+        betas=(0.5, 0.9),
     )
-    opt_gen = optim.RMSprop(
+    opt_gen = optim.Adam(
         list(gen_D.parameters()) + list(gen_N.parameters()),
-        lr=config.LEARNING_RATE_GEN
+        lr=config.LEARNING_RATE_GEN,
+        betas=(0.5, 0.9),
     )
 
     # Generator cycle loss function
@@ -234,10 +253,11 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    wandb.watch(
-        [gen_D, gen_N, disc_N, disc_D],
-        criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
-    )
+    if not use_ciconv:
+        wandb.watch(
+            [gen_D, gen_N, disc_N, disc_D],
+            criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
+        )
 
     # Training loop
     for epoch in range(config.NUM_EPOCHS):
@@ -298,15 +318,19 @@ if __name__ == "__main__":
     use_ciconv = use_ciconv_d or use_ciconv_g
 
     wandb.login(key=env.WANDB_KEY)
-    wandb.init(project="day2night-wasserstein", entity="tstreefkerk")
-    wandb.config = {
-        "ciconv_d": use_ciconv_d,
-        "ciconv_g": use_ciconv_g,
-        "learning_rate_d": config.LEARNING_RATE_DISC,
-        "learning_rate_g": config.LEARNING_RATE_GEN,
-        "epochs": config.NUM_EPOCHS,
-        "batch_size": config.BATCH_SIZE,
-        "file_extension": train_output_path_tail
-    }
+    wandb.init(
+        project="day2night-wasserstein",
+        entity="tstreefkerk",
+        config={
+            "ciconv_d": use_ciconv_d,
+            "ciconv_g": use_ciconv_g,
+            "learning_rate_d": config.LEARNING_RATE_DISC,
+            "learning_rate_g": config.LEARNING_RATE_GEN,
+            "lambda_cycle": config.LAMBDA_CYCLE,
+            "lambda_gradient_penalty": config.LAMBDA_GRADIENT_PENALTY,
+            "epochs": config.NUM_EPOCHS,
+            "batch_size": config.BATCH_SIZE,
+            "file_extension": train_output_path_tail
+        })
 
     main()

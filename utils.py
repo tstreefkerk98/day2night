@@ -22,7 +22,7 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr):
     checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE)
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
-    print(f"=> Current epoch: {checkpoint['epoch'] + 1}")
+    config.CURRENT_EPOCH = checkpoint['epoch'] + 1
 
     # If we don't do this then it will just have learning rate of old checkpoint
     # and it will lead to many hours of debugging \:
