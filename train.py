@@ -20,11 +20,11 @@ def get_disc_cycle_gan_losses(disc, mse, real, fake):
     with torch.cuda.amp.autocast(enabled=False):
         # Flip 5% of training labels going into Discriminator
         if prob(0.05):
-            disc_real_pred = disc(fake)
+            disc_real_pred = disc(fake.detach())
             disc_fake_pred = disc(real)
         else:
             disc_real_pred = disc(real)
-            disc_fake_pred = disc(fake)
+            disc_fake_pred = disc(fake.detach())
 
         disc_real_pred_mean = disc_real_pred.mean().item()
         disc_fake_pred_mean = disc_fake_pred.mean().item()
