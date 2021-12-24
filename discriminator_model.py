@@ -20,7 +20,7 @@ class Discriminator(nn.Module):
     def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=False, use_cycle_wgan=False):
         super().__init__()
         self.use_ciconv = use_ciconv
-        self.use_wasserstein = use_cycle_wgan
+        self.use_cycle_wgan = use_cycle_wgan
         if use_ciconv:
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             in_channels = 1
@@ -41,7 +41,7 @@ class Discriminator(nn.Module):
         x = self.initial(x)
         x = self.first_leaky(x)
         x = self.model(x)
-        if self.use_wasserstein:
+        if self.use_cycle_wgan:
             return x
         return torch.sigmoid(x)
 

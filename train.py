@@ -83,14 +83,14 @@ def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1,
             fake_night = gen_N(day)
             fake_day = gen_D(night)
 
-            D_N_real_pred, D_N_fake_pred, D_N_real_loss, D_N_fake_loss, D_N_loss = \
-                get_disc_cycle_gan_losses(disc_N, mse, night, fake_night)
+        D_N_real_pred, D_N_fake_pred, D_N_real_loss, D_N_fake_loss, D_N_loss = \
+            get_disc_cycle_gan_losses(disc_N, mse, night, fake_night)
 
-            D_D_real_pred, D_D_fake_pred, D_D_real_loss, D_D_fake_loss, D_D_loss = \
-                get_disc_cycle_gan_losses(disc_D, mse, day, fake_day)
+        D_D_real_pred, D_D_fake_pred, D_D_real_loss, D_D_fake_loss, D_D_loss = \
+            get_disc_cycle_gan_losses(disc_D, mse, day, fake_day)
 
-            # Put it together
-            D_loss = (D_N_loss + D_D_loss) / 2
+        # Put it together
+        D_loss = (D_N_loss + D_D_loss) / 2
 
         opt_disc.zero_grad()
         d_scaler.scale(D_loss).backward()
@@ -163,8 +163,8 @@ def train_gen_cycle_wgan_gp(gen_D, gen_N, disc_N, disc_D, night, fake_night, day
         # Cycle losses
         cycle_day = gen_D(fake_night)
         cycle_night = gen_N(fake_day)
-        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE_WASSERSTEIN
-        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE_WASSERSTEIN
+        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE_W
+        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE_W
 
         # Add all together
         G_loss = (
@@ -256,7 +256,7 @@ def main():
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
         f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
-        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_WASSERSTEIN if use_cycle_wgan else config.LAMBDA_CYCLE}\n"
+        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE}\n"
         # f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n" if use_cycle_wgan else ""
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
@@ -406,7 +406,7 @@ if __name__ == "__main__":
     train_output_path_tail = file_tail if (file_tail := args.file_tail) is not None else "test"
     if (l_cycle := args.l_cycle) is not None:
         if use_cycle_wgan:
-            config.LAMBDA_CYCLE_WASSERSTEIN = l_cycle
+            config.LAMBDA_CYCLE_W = l_cycle
         else:
             config.LAMBDA_CYCLE = l_cycle
     if (l_gradient_pen := args.l_gradient_pen) is not None: config.LAMBDA_GRADIENT_PENALTY = l_gradient_pen
@@ -417,7 +417,7 @@ if __name__ == "__main__":
         "ciconv_g": use_ciconv_g,
         "learning_rate_d": config.LEARNING_RATE_DISC,
         "learning_rate_g": config.LEARNING_RATE_GEN,
-        "lambda_cycle": config.LAMBDA_CYCLE_WASSERSTEIN if use_cycle_wgan else config.LAMBDA_CYCLE,
+        "lambda_cycle": config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE,
         "epochs": config.NUM_EPOCHS,
         "batch_size": config.BATCH_SIZE,
         "file_extension": train_output_path_tail
