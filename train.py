@@ -20,10 +20,31 @@ from generator_model import Generator as Generator
 train_output_files = {}
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
-    N_reals = 0
-    N_fakes = 0
+def train_disc1(disc, mse, real, fake):
+    with torch.cuda.amp.autocast(enabled=False):
+        # flip 5% of training labels going into Discriminator
+        if utils.prob(0.05):
+            disc_real_pred = disc(fake)
+            disc_fake_pred = disc(real)
+        else:
+            disc_real_pred = disc(real)
+            disc_fake_pred = disc(fake)
 
+        disc_real_pred_mean = disc_real_pred.mean().item()
+        disc_fake_pred_mean = disc_fake_pred.mean().item()
+
+        disc_real_loss = mse(disc_real_pred, torch.ones_like(disc_real_pred))
+        # one sided label smoothing Discriminator Night
+        if disc_real_loss.mean().item() < 0.1:
+            disc_real_loss = mse(disc_real_pred, torch.full_like(disc_real_pred, 0.9))
+        disc_fake_loss = mse(disc_fake_pred, torch.zeros_like(disc_fake_pred))
+
+        disc_loss = disc_real_loss + disc_fake_loss
+
+        return disc_real_pred_mean, disc_fake_pred_mean, disc_real_loss, disc_fake_loss, disc_loss
+
+
+def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
     for idx, (day, night) in enumerate(loader):
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
@@ -31,47 +52,13 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         # Train Discriminators N and D
         with torch.cuda.amp.autocast(enabled=False):
             fake_night = gen_N(day)
-
-            # flip 5% of training labels going into Discriminator
-            if utils.prob(0.05):
-                D_N_real = disc_N(fake_night.detach())
-                D_N_fake = disc_N(night)
-            else:
-                D_N_real = disc_N(night)
-                D_N_fake = disc_N(fake_night.detach())
-
-            D_N_real_mean = D_N_real.mean().item()
-            D_N_fake_mean = D_N_fake.mean().item()
-            N_reals += D_N_real_mean
-            N_fakes += D_N_fake_mean
-
-            # D_N_real_loss = mse(D_N_real - D_N_fake, torch.ones_like(D_N_real))
-            D_N_real_loss = mse(D_N_real, torch.ones_like(D_N_real))
-            # one sided label smoothing Discriminator Night
-            if D_N_real_loss.mean().item() < 0.1:
-                D_N_real_loss = mse(D_N_real, torch.full_like(D_N_real, 0.9))
-            D_N_fake_loss = mse(D_N_fake, torch.zeros_like(D_N_fake))
-            D_N_loss = D_N_real_loss + D_N_fake_loss
-
             fake_day = gen_D(night)
 
-            # flip 5% of training labels going into Discriminator
-            if utils.prob(0.05):
-                D_D_real = disc_D(fake_day.detach())
-                D_D_fake = disc_D(day)
-            else:
-                D_D_real = disc_D(day)
-                D_D_fake = disc_D(fake_day.detach())
+            D_N_real_mean, D_N_fake_mean, D_N_real_loss, D_N_fake_loss, D_N_loss = \
+                train_disc1(disc_N, mse, night, fake_night)
 
-            D_D_real_mean = D_D_real.mean().item()
-            D_D_fake_mean = D_D_fake.mean().item()
-
-            D_D_real_loss = mse(D_D_real, torch.ones_like(D_D_real))
-            # one sided label smoothing Discriminator Day
-            if D_D_real_loss.mean().item() < 0.1:
-                D_D_real_loss = mse(D_D_real, torch.full_like(D_D_real, 0.9))
-            D_D_fake_loss = mse(D_D_fake, torch.zeros_like(D_D_fake))
-            D_D_loss = D_D_real_loss + D_D_fake_loss
+            D_D_real_mean, D_D_fake_mean, D_D_real_loss, D_D_fake_loss, D_D_loss = \
+                train_disc1(disc_D, mse, day, fake_day)
 
             # put it together
             D_loss = (D_N_loss + D_D_loss) / 2
@@ -105,13 +92,6 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
 
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
-        if use_ciconv_d:
-            # nn.utils.clip_grad_norm_(disc_D.ciconv.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(disc_N.ciconv.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(gen_D.last.parameters(), 0.5)
-            # nn.utils.clip_grad_norm_(gen_N.last.parameters(), 0.5)
-            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
-            nn.utils.clip_grad_norm_(gen_N.last.parameters(), 5)
         g_scaler.step(opt_gen)
         g_scaler.update()
 
@@ -170,8 +150,8 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         if use_ciconv_d:
             log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
             log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
-            dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-            log_obj["dy2/dy1"] = dy2_dy1
+            # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
+            # log_obj["dy2/dy1"] = dy2_dy1
 
         if use_ciconv_g:
             log_obj["Generator night CIConv scale"] = gen_N.ciconv.scale.item()
