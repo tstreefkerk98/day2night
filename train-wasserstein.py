@@ -13,8 +13,8 @@ from dataset import DayNightDataset
 from utils import save_checkpoint, load_checkpoint
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image, make_grid
-from discriminator_model import Discriminator
-from generator_model import Generator as Generator
+from discriminator_model_wasserstein import Discriminator
+from generator_model_wasserstein import Generator as Generator
 from torch.autograd import grad
 
 
@@ -55,8 +55,8 @@ def train_gen(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1
         # cycle losses
         cycle_day = gen_D(fake_night)
         cycle_night = gen_N(fake_day)
-        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE
-        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE
+        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE_WASSERSTEIN
+        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE_WASSERSTEIN
 
         # add all together
         G_loss = (
@@ -182,7 +182,7 @@ def main():
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
         f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
-        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
+        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_WASSERSTEIN}\n"
         f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
@@ -326,7 +326,7 @@ if __name__ == "__main__":
             "ciconv_g": use_ciconv_g,
             "learning_rate_d": config.LEARNING_RATE_DISC,
             "learning_rate_g": config.LEARNING_RATE_GEN,
-            "lambda_cycle": config.LAMBDA_CYCLE,
+            "lambda_cycle": config.LAMBDA_CYCLE_WASSERSTEIN,
             "lambda_gradient_penalty": config.LAMBDA_GRADIENT_PENALTY,
             "epochs": config.NUM_EPOCHS,
             "batch_size": config.BATCH_SIZE,
