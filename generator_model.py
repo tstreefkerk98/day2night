@@ -11,8 +11,7 @@ class ConvBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, padding_mode="reflect", **kwargs)
             if down
             else nn.ConvTranspose2d(in_channels, out_channels, **kwargs),
-            # nn.InstanceNorm2d(out_channels),
-            nn.BatchNorm2d(out_channels),
+            nn.InstanceNorm2d(out_channels),
             nn.ReLU(inplace=True) if use_act else nn.Identity()
         )
 
@@ -35,13 +34,13 @@ class ResidualBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self, img_channels, num_features=64, num_residuals=9, use_ciconv=False):
         super().__init__()
-        if use_ciconv:
+        self.use_ciconv = use_ciconv
+        if self.use_ciconv:
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             img_channels = 1
         self.initial = nn.Sequential(
             nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
-            # nn.InstanceNorm2d(num_features),
-            nn.BatchNorm2d(num_features),
+            nn.InstanceNorm2d(num_features),
             nn.ReLU(inplace=True),
         )
         self.down_blocks = nn.ModuleList([
@@ -56,11 +55,10 @@ class Generator(nn.Module):
                       output_padding=1),
         ])
 
-        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3,
-                              padding_mode="reflect")
+        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3, padding_mode="reflect")
 
     def forward(self, x):
-        if hasattr(self, "ciconv"):
+        if self.use_ciconv:
             x = self.ciconv(x)
         x = self.initial(x)
         for layer in self.down_blocks:

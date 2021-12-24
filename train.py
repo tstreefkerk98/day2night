@@ -1,29 +1,25 @@
+import argparse
 import math
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import config
-import sys
-import utils
 import env
-import json
 import wandb
-from PIL import Image
 from dataset import DayNightDataset
-from utils import save_checkpoint, load_checkpoint
+from utils import save_checkpoint, load_checkpoint, print_duration, get_time, get_date_time, save_images, prob, \
+    dir_contains_checkpoint_files, log_training_statistics
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image, make_grid
 from discriminator_model import Discriminator
 from generator_model import Generator as Generator
+from torch.autograd import grad
 
-train_output_files = {}
 
-
-def train_disc1(disc, mse, real, fake):
+# Train CycleGAN Begin -------------------------------------------------------------------------------------------------
+def get_disc_cycle_gan_losses(disc, mse, real, fake):
     with torch.cuda.amp.autocast(enabled=False):
-        # flip 5% of training labels going into Discriminator
-        if utils.prob(0.05):
+        # Flip 5% of training labels going into Discriminator
+        if prob(0.05):
             disc_real_pred = disc(fake)
             disc_fake_pred = disc(real)
         else:
@@ -34,17 +30,50 @@ def train_disc1(disc, mse, real, fake):
         disc_fake_pred_mean = disc_fake_pred.mean().item()
 
         disc_real_loss = mse(disc_real_pred, torch.ones_like(disc_real_pred))
-        # one sided label smoothing Discriminator Night
+        # One sided label smoothing Discriminator Night
         if disc_real_loss.mean().item() < 0.1:
             disc_real_loss = mse(disc_real_pred, torch.full_like(disc_real_pred, 0.9))
         disc_fake_loss = mse(disc_fake_pred, torch.zeros_like(disc_fake_pred))
 
+        # Add losses together
         disc_loss = disc_real_loss + disc_fake_loss
 
         return disc_real_pred_mean, disc_fake_pred_mean, disc_real_loss, disc_fake_loss, disc_loss
 
 
-def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path):
+def train_gen_cycle_gan(disc_D, disc_N, gen_D, gen_N, opt_gen, g_scaler, mse, l1, day, fake_day, night, fake_night):
+    # Train Generators N and D
+    with torch.cuda.amp.autocast(enabled=False):
+        # Adversarial loss for both generators
+        D_N_fake = disc_N(fake_night)
+        D_D_fake = disc_D(fake_day)
+        G_N_loss = mse(D_N_fake, torch.ones_like(D_N_fake))
+        G_D_loss = mse(D_D_fake, torch.ones_like(D_D_fake))
+
+        # Cycle loss
+        cycle_day = gen_D(fake_night)
+        cycle_night = gen_N(fake_day)
+        G_D_cycle_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE
+        G_N_cycle_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE
+
+        # Add all together
+        G_loss = (
+                G_D_loss
+                + G_N_loss
+                + G_D_cycle_loss
+                + G_N_cycle_loss
+        )
+
+    opt_gen.zero_grad()
+    g_scaler.scale(G_loss).backward()
+    g_scaler.step(opt_gen)
+    g_scaler.update()
+
+    return G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss, G_loss
+
+
+def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path,
+                    epoch):
     for idx, (day, night) in enumerate(loader):
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
@@ -54,13 +83,13 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
             fake_night = gen_N(day)
             fake_day = gen_D(night)
 
-            D_N_real_mean, D_N_fake_mean, D_N_real_loss, D_N_fake_loss, D_N_loss = \
-                train_disc1(disc_N, mse, night, fake_night)
+            D_N_real_pred, D_N_fake_pred, D_N_real_loss, D_N_fake_loss, D_N_loss = \
+                get_disc_cycle_gan_losses(disc_N, mse, night, fake_night)
 
-            D_D_real_mean, D_D_fake_mean, D_D_real_loss, D_D_fake_loss, D_D_loss = \
-                train_disc1(disc_D, mse, day, fake_day)
+            D_D_real_pred, D_D_fake_pred, D_D_real_loss, D_D_fake_loss, D_D_loss = \
+                get_disc_cycle_gan_losses(disc_D, mse, day, fake_day)
 
-            # put it together
+            # Put it together
             D_loss = (D_N_loss + D_D_loss) / 2
 
         opt_disc.zero_grad()
@@ -69,165 +98,220 @@ def train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d
         d_scaler.update()
 
         # Train Generators N and D
+        G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss, G_loss = \
+            train_gen_cycle_gan(disc_D, disc_N, gen_D, gen_N, opt_gen, g_scaler, mse, l1, day, fake_day, night,
+                                fake_night)
+
+        # Save images
+        save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
+
+        # Log training statistics
+        log_training_statistics(
+            use_ciconv_d, use_ciconv_g,
+            # Generators and Discriminators
+            gen_D, gen_N, disc_D, disc_N,
+            # Discriminator losses
+            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred,
+            # Generator losses
+            G_D_loss=G_D_loss, G_N_loss=G_N_loss, G_D_cycle_loss=G_D_cycle_loss, G_N_cycle_loss=G_N_cycle_loss,
+            G_loss=G_loss,
+            # CycleGAN specific losses
+            D_D_real_loss=D_D_real_loss, D_D_fake_loss=D_D_fake_loss, D_N_real_loss=D_N_real_loss,
+            D_N_fake_loss=D_N_fake_loss, D_loss=D_loss
+        )
+
+        # Print progress
+        if len(loader) % math.ceil(len(loader) / 10) == 0:
+            print(f"Batch {idx} out of {len(loader)} completed")
+
+
+# --------------------------------------------------------------------------------------------------- Train CycleGAN End
+
+# Train CycleWGAN-GP Begin ---------------------------------------------------------------------------------------------
+def train_disc_cycle_wgan_gp(disc, real, fake, opt_disc, d_scaler):
+    with torch.cuda.amp.autocast(enabled=False):
+        # Predictions
+        disc_real_pred = -disc(real)
+        disc_fake_pred = disc(fake.detach())
+
+        disc_real_pred_mean = torch.mean(disc_real_pred)
+        disc_fake_pred_mean = torch.mean(disc_fake_pred)
+
+        # Gradient penalty
+        disc_gradients = compute_gradient_penalty(disc, real, fake)
+        disc_gradient_penalty = config.LAMBDA_GRADIENT_PENALTY * ((disc_gradients.norm(2, dim=1) - 1) ** 2).mean()
+
+        # Add all together
+        disc_loss = disc_real_pred_mean + disc_fake_pred_mean + disc_gradient_penalty
+
+    opt_disc.zero_grad()
+    d_scaler.scale(disc_loss).backward()
+    d_scaler.step(opt_disc)
+    d_scaler.update()
+
+    return disc_real_pred_mean, disc_fake_pred_mean, disc_loss, disc_gradient_penalty
+
+
+def train_gen_cycle_wgan_gp(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen, g_scaler):
+    with torch.cuda.amp.autocast(enabled=False):
+        # Adversarial losses
+        D_N_fake = disc_N(fake_night)
+        D_D_fake = disc_D(fake_day)
+        loss_G_N = -torch.mean(D_N_fake)
+        loss_G_D = -torch.mean(D_D_fake)
+
+        # Cycle losses
+        cycle_day = gen_D(fake_night)
+        cycle_night = gen_N(fake_day)
+        cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE_WASSERSTEIN
+        cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE_WASSERSTEIN
+
+        # Add all together
+        G_loss = (
+                loss_G_D
+                + loss_G_N
+                + cycle_day_loss
+                + cycle_night_loss
+        )
+
+    opt_gen.zero_grad()
+    g_scaler.scale(G_loss).backward()
+    g_scaler.step(opt_gen)
+    g_scaler.update()
+
+    return loss_G_D, loss_G_N, cycle_day_loss, cycle_night_loss, G_loss
+
+
+def compute_gradient_penalty(disc, real_images, fake_images):
+    eps = torch.rand(1, requires_grad=True)
+    eps = eps.expand(real_images.size())
+    eps = eps.to(config.DEVICE)
+    x_tilde = eps * real_images + (1 - eps) * fake_images.detach()
+    x_tilde = x_tilde.to(config.DEVICE)
+    pred_tilde = disc(x_tilde)
+    return grad(outputs=pred_tilde, inputs=x_tilde,
+                grad_outputs=torch.ones(pred_tilde.size()).to(config.DEVICE),
+                create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+
+def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, l1, mse, d_scaler,
+                        g_scaler, base_path, epoch):
+    for idx, (day, night) in enumerate(loader):
+        day = day.to(config.DEVICE)
+        night = night.to(config.DEVICE)
+
         with torch.cuda.amp.autocast(enabled=False):
-            # adversarial loss for both generators
-            D_N_fake = disc_N(fake_night)
-            D_D_fake = disc_D(fake_day)
-            loss_G_N = mse(D_N_fake, torch.ones_like(D_N_fake))
-            loss_G_D = mse(D_D_fake, torch.ones_like(D_D_fake))
+            fake_night = gen_N(day)
+            fake_day = gen_D(night)
 
-            # cycle loss
-            cycle_day = gen_D(fake_night)
-            cycle_night = gen_N(fake_day)
-            cycle_day_loss = l1(day, cycle_day) * config.LAMBDA_CYCLE
-            cycle_night_loss = l1(night, cycle_night) * config.LAMBDA_CYCLE
+        # Train Discriminators
+        D_N_real_pred, D_N_fake_pred, D_N_loss, D_N_gradient_penalty = \
+            train_disc_cycle_wgan_gp(disc_N, night, fake_night, opt_disc_N, d_scaler)
 
-            # add all together
-            G_loss = (
-                    loss_G_D
-                    + loss_G_N
-                    + cycle_day_loss
-                    + cycle_night_loss
-            )
+        D_D_real_pred, D_D_fake_pred, D_D_loss, D_D_gradient_penalty = \
+            train_disc_cycle_wgan_gp(disc_D, day, fake_day, opt_disc_D, d_scaler)
 
-        opt_gen.zero_grad()
-        g_scaler.scale(G_loss).backward()
-        g_scaler.step(opt_gen)
-        g_scaler.update()
+        # Train Generators (once every x batches)
+        gen_is_trained = False
+        if idx % 5 == 0:
+            G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss, G_loss = \
+                train_gen_cycle_wgan_gp(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen,
+                                        g_scaler)
+            gen_is_trained = True
 
-        epoch_idx = len(train_output_files) - 1
-        if idx == 0:
-            epoch_idx += 1
-            train_output_files[f"epoch_{epoch_idx}"] = {}
+        # Save images
+        save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
 
-        if idx % math.ceil(len(loader) / 5) == 0 or idx + 1 == len(loader):
-            save_image(fake_day * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{epoch_idx}_{idx}.png")
-            save_image(fake_night * 0.5 + 0.5,
-                       f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_night_{epoch_idx}_{idx}.png")
+        # noinspection PyUnboundLocalVariable
+        log_training_statistics(
+            use_ciconv_d, use_ciconv_g,
+            # Generators and Discriminators
+            gen_D, gen_N, disc_D, disc_N,
+            # Discriminator losses
+            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred,
+            # Generator losses
+            G_D_loss=G_D_loss if gen_is_trained else None,
+            G_N_loss=G_N_loss if gen_is_trained else None,
+            G_D_cycle_loss=G_D_cycle_loss if gen_is_trained else None,
+            G_N_cycle_loss=G_N_cycle_loss if gen_is_trained else None,
+            G_loss=G_loss if gen_is_trained else None,
+            # CycleWGAN-gp specific losses
+            D_D_gradient_penalty=D_D_gradient_penalty, D_N_gradient_penalty=D_N_gradient_penalty, D_D_loss=D_D_loss,
+            D_N_loss=D_N_loss,
+        )
 
-        D_N_real_loss_mean, D_N_fake_loss_mean, D_D_real_loss_mean, D_D_fake_loss_mean, \
-        loss_G_D_mean, loss_G_N_mean, loss_C_N_mean, loss_C_D_mean = \
-            map(lambda x: x.mean().item(),
-                [D_N_real_loss, D_N_fake_loss, D_D_real_loss, D_D_fake_loss, loss_G_D, loss_G_N, cycle_day_loss,
-                 cycle_night_loss])
-
-        dy1_dw1 = gen_D.last.weight.grad.mean().item()
-        # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-        dy3_dy2 = disc_D.initial.weight.grad.mean().item()
-        dL_dy3 = D_D_loss
-
-        log_obj = {
-            "Discriminator day real prediction": D_D_real_mean,
-            "Discriminator day fake prediction": D_D_fake_mean,
-            "Discriminator night real prediction": D_N_real_mean,
-            "Discriminator night fake prediction": D_N_fake_mean,
-            "Discriminator day real loss": D_D_real_loss_mean,
-            "Discriminator day fake loss": D_D_fake_loss_mean,
-            "Discriminator night real loss": D_N_real_loss_mean,
-            "Discriminator night fake loss": D_N_fake_loss_mean,
-            "Discriminator loss": D_loss,
-            "Loss generator day": loss_G_D_mean,
-            "Loss generator night": loss_G_N_mean,
-            "Cycle loss day": loss_C_D_mean,
-            "Cycle loss night": loss_C_N_mean,
-            "Generator loss": G_loss,
-            # "Real_day": get_wandb_img(day),
-            # "Fake_day": get_wandb_img(fake_day),
-            # "Real_night": get_wandb_img(night),
-            # "Fake_night": get_wandb_img(fake_night),
-            "Epoch": epoch_idx,
-            "Batch": idx,
-            "Generator day last gradient": gen_D.last.weight.grad.mean().item(),
-            "Generator night last gradient": gen_N.last.weight.grad.mean().item(),
-            "Generator day last gradient abs": torch.abs(gen_D.last.weight.grad).mean().item(),
-            "Generator night last gradient abs": torch.abs(gen_N.last.weight.grad).mean().item(),
-            "dy1/dw1": dy1_dw1,
-            "dy3/dy2": dy3_dy2,
-            "dL/dy3": dL_dy3,
-        }
-
-        if use_ciconv_d:
-            log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
-            log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
-            # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-            # log_obj["dy2/dy1"] = dy2_dy1
-
-        if use_ciconv_g:
-            log_obj["Generator night CIConv scale"] = gen_N.ciconv.scale.item()
-            log_obj["Generator day CIConv scale"] = gen_D.ciconv.scale.item()
-            # dy2_dy1 = disc_D.ciconv.scale.grad.mean().item()
-            # log_obj["dy2/dy1"] = dy2_dy1
-
-        wandb.log(log_obj)
+        # Print progress
+        if len(loader) % math.ceil(len(loader) / 10) == 0:
+            print(f"Batch {idx} out of {len(loader)} completed")
 
 
-# def get_wandb_img(tensor):
-#     grid = make_grid(tensor * 0.5 + 0.5)
-#     # Add 0.5 after unnormalizing to [0, 255] to round to nearest integer
-#     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-#     pil_img = Image.fromarray(ndarr)
-#     return wandb.Image(pil_img)
-
-
-# def create_label_smoothing_tensor(input_tensor, r1, r2):
-#     return (r1 - r2) * torch.rand_like(input_tensor) + r2
-
+# ----------------------------------------------------------------------------------------------- Train CycleWGAN-GP End
 
 def main():
-    training_start_time = utils.get_time()
+    training_start_time = get_time()
     print(
-        f"Training started at {utils.get_date_time(training_start_time)}, "
+        f"Training started at {get_date_time(training_start_time)}, "
         f"{'' if use_ciconv else 'not '}using CIConv\n"
         "with settings:\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
-        f"LEARNING_RATE_G: {config.LEARNING_RATE_G}\n"
-        f"LEARNING_RATE_D: {config.LEARNING_RATE_D}\n"
-        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE}\n"
+        f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
+        f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
+        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_WASSERSTEIN if use_cycle_wgan else config.LAMBDA_CYCLE}\n"
+        # f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n" if use_cycle_wgan else ""
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
         f"LOAD_MODEL: {config.LOAD_MODEL}\n"
         f"GENERATOR_CICONV: {use_ciconv_g}\n"
-        f"DISCRIMINATOR_CICONV: {use_ciconv_d}\n"
+        f"DISCRIMINATOR_CICONV: {use_ciconv_d}"
     )
+    if use_cycle_wgan:
+        print(f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n")
 
-    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
-    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d).to(config.DEVICE)
+    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan).to(config.DEVICE)
+    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan).to(config.DEVICE)
     gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
     gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
 
-    # opt_temp = optim.RMSprop()
-
-    opt_disc = optim.Adam(
-        list(disc_N.parameters()) + list(disc_D.parameters()),
-        lr=config.LEARNING_RATE_D,
-        betas=(0.5, 0.999),
-    )
+    # Initialise optimizers
+    if use_cycle_wgan:
+        opt_disc_N = optim.Adam(
+            list(disc_N.parameters()),
+            lr=config.LEARNING_RATE_DISC,
+            betas=(0.5, 0.999),
+        )
+        opt_disc_D = optim.Adam(
+            list(disc_D.parameters()),
+            lr=config.LEARNING_RATE_DISC,
+            betas=(0.5, 0.999),
+        )
+    else:
+        opt_disc = optim.Adam(
+            list(disc_N.parameters()) + list(disc_D.parameters()),
+            lr=config.LEARNING_RATE_DISC,
+            betas=(0.5, 0.999),
+        )
     opt_gen = optim.Adam(
         list(gen_D.parameters()) + list(gen_N.parameters()),
-        lr=config.LEARNING_RATE_G,
+        lr=config.LEARNING_RATE_GEN,
         betas=(0.5, 0.999),
     )
 
+    # Error functions
     L1 = nn.L1Loss()
     mse = nn.MSELoss()
 
     base_path = "ciconv/" if use_ciconv else "no_ciconv/"
-
-    file_path = f"{base_path}training_outputs/training_output_{train_output_path_tail}.json"
-    if os.path.isfile(file_path):
-        with open(file_path) as output_file:
-            global train_output_files
-            train_output_files = json.load(output_file)
-
     checkpoint_files = [train_output_path_tail + "_" + config.CHECKPOINT_GEN_N,
                         train_output_path_tail + "_" + config.CHECKPOINT_GEN_D,
                         train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_N,
                         train_output_path_tail + "_" + config.CHECKPOINT_CRITIC_D]
     models = [gen_N, gen_D, disc_N, disc_D]
-    optimizers = [opt_gen, opt_gen, opt_disc, opt_disc]
-    learning_rates = [config.LEARNING_RATE_G, config.LEARNING_RATE_G, config.LEARNING_RATE_D, config.LEARNING_RATE_D]
+    # noinspection PyUnboundLocalVariable
+    optimizers = [opt_gen, opt_gen, opt_disc_N, opt_disc_D] if use_cycle_wgan else \
+        [opt_gen, opt_gen, opt_disc, opt_disc]
+    learning_rates = [config.LEARNING_RATE_GEN, config.LEARNING_RATE_GEN, config.LEARNING_RATE_DISC,
+                      config.LEARNING_RATE_DISC]
 
     if config.LOAD_MODEL and dir_contains_checkpoint_files(base_path, checkpoint_files):
         for i in range(len(checkpoint_files)):
@@ -253,77 +337,100 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    wandb.watch(
-        [gen_D, gen_N, disc_N, disc_D],
-        criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
-    )
+    if not (use_ciconv and use_cycle_wgan):
+        wandb.watch(
+            [gen_D, gen_N, disc_N, disc_D],
+            criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
+        )
 
+    # Training loop
     for epoch in range(config.NUM_EPOCHS):
-        time = utils.get_time()
+        # Epoch start time
+        time = get_time()
         progress = f"{epoch + 1}/{config.NUM_EPOCHS}"
-        print(f"Epoch: {progress}, batches: {len(loader)}, start time: {utils.get_date_time(time)}")
+        print(f"Epoch: {progress}, batches: {len(loader)}, start time: {get_date_time(time)}")
 
-        train_fn(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler, base_path)
+        # Train model
+        if use_cycle_wgan:
+            train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, L1, mse,
+                                d_scaler, g_scaler, base_path, epoch)
+        else:
+            train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler,
+                            base_path, epoch)
 
-        utils.print_duration(utils.get_time() - time, "Epoch", progress)
+        # Print epoch duration
+        print_duration(get_time() - time, "Epoch", progress)
 
+        # Save model
         if config.SAVE_MODEL:
             for i in range(len(checkpoint_files)):
-                save_checkpoint(models[i], optimizers[i], filename=base_path + "checkpoints/" + checkpoint_files[i])
+                save_checkpoint(models[i], optimizers[i], filename=base_path + "checkpoints/" + checkpoint_files[i],
+                                epoch=epoch)
 
-        output_file_path = \
-            f"{'ciconv' if use_ciconv else 'no_ciconv'}/training_outputs/training_output_{train_output_path_tail}.json"
-        with open(output_file_path, 'w', encoding='utf-8') as output_file:
-            json.dump(train_output_files, output_file, ensure_ascii=False, indent=4)
-
-        if epoch + 1 == config.NUM_EPOCHS:
-            utils.print_duration(utils.get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
-
-
-def dir_contains_checkpoint_files(base_path, checkpoint_files):
-    return all([os.path.exists(base_path + "checkpoints/" + checkpoint_file) for checkpoint_file in checkpoint_files])
+    # Print training time
+    print_duration(get_time() - training_start_time, "Training", f"{config.NUM_EPOCHS} epochs")
 
 
 if __name__ == "__main__":
-    disc_uses_ciconv_d = sys.argv[1]
-    assert disc_uses_ciconv_d.lower() in ["true", "false"]
+    # Define argument parser
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--cycle_wgan", action='store_true', help="True to use CycleWGAN-gp")
+    parser.add_argument("--cycle_gan", action='store_true', help="True to use CycleGAN")
+    parser.add_argument("--ciconv_disc", action='store_true', help="True to use CIConv in the Discriminators")
+    parser.add_argument("--ciconv_gen", action='store_true', help="True to use CIConv in the Generators")
+    parser.add_argument("--lr_gen", type=float, help="Generator learning rate, if not given a default will be used")
+    parser.add_argument("--lr_disc", type=float,
+                        help="Discriminator learning rate, if not given a default will be used")
+    parser.add_argument("--batch_size", type=int, help="Batch size, if not given a default will be used")
+    parser.add_argument("--num_epochs", type=int, help="Number of epochs, if not given a default will be used")
+    parser.add_argument("--file_tail", type=str,
+                        help="File tail (used for storing files), if not given a default will be used")
+    parser.add_argument("--l_cycle", type=int, help="Lambda cycle, if not given a default will be used")
+    parser.add_argument("--l_gradient_pen", type=int,
+                        help="Lambda gradient penalty, if not given a default will be used")
 
-    disc_uses_ciconv_g = sys.argv[2]
-    assert disc_uses_ciconv_g.lower() in ["true", "false"]
+    # Parse arguments
+    args = parser.parse_args()
 
-    learning_rate_g = eval(sys.argv[3])
-    assert isinstance(learning_rate_g, float)
-    config.LEARNING_RATE_G = learning_rate_g
-
-    learning_rate_d = eval(sys.argv[4])
-    assert isinstance(learning_rate_d, float)
-    config.LEARNING_RATE_D = learning_rate_d
-
-    batch_size = eval(sys.argv[5])
-    assert isinstance(batch_size, int)
-    config.BATCH_SIZE = batch_size
-
-    num_epochs = eval(sys.argv[6])
-    assert isinstance(num_epochs, int)
-    config.NUM_EPOCHS = num_epochs
-
-    train_output_path_tail = sys.argv[7]
-    assert isinstance(train_output_path_tail, str)
-
-    use_ciconv_d = eval(disc_uses_ciconv_d.title())
-    use_ciconv_g = eval(disc_uses_ciconv_g.title())
+    # Assign arguments
+    use_cycle_wgan = args.cycle_wgan
+    assert args.cycle_gan ^ use_cycle_wgan
+    use_ciconv_d = args.ciconv_disc
+    use_ciconv_g = args.ciconv_gen
+    assert not (use_ciconv_g and use_ciconv_d)
     use_ciconv = use_ciconv_d or use_ciconv_g
+    if (lr_disc := args.lr_disc) is not None: config.LEARNING_RATE_DISC = lr_disc
+    if (lr_gen := args.lr_gen) is not None: config.LEARNING_RATE_GEN = lr_gen
+    if (batch_size := args.batch_size) is not None: config.BATCH_SIZE = batch_size
+    if (num_epochs := args.num_epochs) is not None: config.NUM_EPOCHS = num_epochs
+    train_output_path_tail = file_tail if (file_tail := args.file_tail) is not None else "test"
+    if (l_cycle := args.l_cycle) is not None:
+        if use_cycle_wgan:
+            config.LAMBDA_CYCLE_WASSERSTEIN = l_cycle
+        else:
+            config.LAMBDA_CYCLE = l_cycle
+    if (l_gradient_pen := args.l_gradient_pen) is not None: config.LAMBDA_GRADIENT_PENALTY = l_gradient_pen
 
-    wandb.login(key=env.WANDB_KEY)
-    wandb.init(project="day2night", entity="tstreefkerk")
-    wandb.config = {
+    # Define wandb config object
+    config_obj = {
         "ciconv_d": use_ciconv_d,
         "ciconv_g": use_ciconv_g,
-        "learning_rate_d": config.LEARNING_RATE_D,
-        "learning_rate_g": config.LEARNING_RATE_G,
+        "learning_rate_d": config.LEARNING_RATE_DISC,
+        "learning_rate_g": config.LEARNING_RATE_GEN,
+        "lambda_cycle": config.LAMBDA_CYCLE_WASSERSTEIN if use_cycle_wgan else config.LAMBDA_CYCLE,
         "epochs": config.NUM_EPOCHS,
         "batch_size": config.BATCH_SIZE,
         "file_extension": train_output_path_tail
     }
+    if use_cycle_wgan:
+        config_obj["lambda_gradient_penalty"] = config.LAMBDA_GRADIENT_PENALTY
+
+    # Login and initialise wandb
+    wandb.login(key=env.WANDB_KEY)
+    wandb.init(
+        project=("day2night-cycle-wgan" if use_cycle_wgan else "day2night-cycle-gan"),
+        entity="tstreefkerk",
+        config=config_obj
+    )
 
     main()
