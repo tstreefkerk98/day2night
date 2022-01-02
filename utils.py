@@ -1,15 +1,13 @@
 import math
-
 import numpy as np
 import os
 import random
 import torch
 import wandb
-from PIL import Image
-from torchvision.utils import save_image, make_grid
-
 import config
 import datetime
+from PIL import Image
+from torchvision.utils import save_image, make_grid
 from pathlib import Path
 
 
@@ -112,11 +110,11 @@ def log_training_statistics(
         # Generators and Discriminators
         gen_D, gen_N, disc_D, disc_N,
         # Discriminator losses
-        D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred,
+        D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
         # Generator losses
         G_D_loss=None, G_N_loss=None, G_D_cycle_loss=None, G_N_cycle_loss=None, G_loss=None,
         # CycleWGAN-gp specific losses
-        D_D_gradient_penalty=None, D_N_gradient_penalty=None, D_D_loss=None, D_N_loss=None,
+        D_D_gradient_penalty=None, D_N_gradient_penalty=None,
         # CycleGAN specific losses
         D_D_real_loss=None, D_D_fake_loss=None, D_N_real_loss=None, D_N_fake_loss=None, D_loss=None
 ):
@@ -125,6 +123,16 @@ def log_training_statistics(
         "Discriminator day fake prediction": D_D_fake_pred,
         "Discriminator night real prediction": D_N_real_pred,
         "Discriminator night fake prediction": D_N_fake_pred,
+        "Discriminator day loss": D_D_loss,
+        "Discriminator night loss": D_N_loss,
+        "Discriminator day initial gradient": disc_D.initial.weight.grad.mean().item(),
+        "Discriminator night initial gradient": disc_N.initial.weight.grad.mean().item(),
+        "Discriminator day initial gradient abs": torch.abs(disc_D.initial.weight.grad).mean().item(),
+        "Discriminator night initial gradient abs": torch.abs(disc_N.initial.weight.grad).mean().item(),
+        "Generator day initial gradient": gen_D.initial.weight.grad.mean().item(),
+        "Generator night initial gradient": gen_N.initial.weight.grad.mean().item(),
+        "Generator day initial gradient abs": torch.abs(gen_D.initial.weight.grad).mean().item(),
+        "Generator night initial gradient abs": torch.abs(gen_N.initial.weight.grad).mean().item(),
         "Generator day last gradient": gen_D.last.weight.grad.mean().item(),
         "Generator night last gradient": gen_N.last.weight.grad.mean().item(),
         "Generator day last gradient abs": torch.abs(gen_D.last.weight.grad).mean().item(),
@@ -141,22 +149,29 @@ def log_training_statistics(
     if use_ciconv_d:
         log_obj["Discriminator night CIConv scale"] = disc_N.ciconv.scale.item()
         log_obj["Discriminator day CIConv scale"] = disc_D.ciconv.scale.item()
+        log_obj["Discriminator night CIConv gradient"] = disc_N.ciconv.scale.grad.mean().item()
+        log_obj["Discriminator day CIConv gradient"] = disc_D.ciconv.scale.grad.mean().item()
+        log_obj["Discriminator night CIConv gradient abs"] = torch.abs(disc_N.ciconv.scale.grad).mean().item()
+        log_obj["Discriminator day CIConv gradient abs"] = torch.abs(disc_D.ciconv.scale.grad).mean().item()
+
     elif use_ciconv_g:
         log_obj["Discriminator night CIConv scale"] = gen_N.ciconv.scale.item()
         log_obj["Discriminator day CIConv scale"] = gen_D.ciconv.scale.item()
+        log_obj["Discriminator night CIConv gradient"] = gen_N.ciconv.scale.grad.mean().item()
+        log_obj["Discriminator day CIConv gradient"] = gen_D.ciconv.scale.grad.mean().item()
+        log_obj["Discriminator night CIConv gradient abs"] = torch.abs(gen_N.ciconv.scale.grad).mean().item()
+        log_obj["Discriminator day CIConv gradient abs"] = torch.abs(gen_D.ciconv.scale.grad).mean().item()
 
     # CycleWGAN-gp specific losses
-    if all([D_D_gradient_penalty, D_N_gradient_penalty, D_D_loss, D_N_loss]):
+    if all([D_D_gradient_penalty, D_N_gradient_penalty]):
         log_obj["Discriminator day gradient penalty"] = D_D_gradient_penalty
         log_obj["Discriminator night gradient penalty"] = D_N_gradient_penalty
-        log_obj["Discriminator day loss"] = D_D_loss
-        log_obj["Discriminator night loss"] = D_N_loss
     # CycleGAN specific losses
     elif all([D_D_real_loss, D_D_fake_loss, D_N_real_loss, D_N_fake_loss, D_loss]):
-        log_obj["Discriminator day real loss"] = D_D_real_loss.mean().item(),
-        log_obj["Discriminator day fake loss"] = D_D_fake_loss.mean().item(),
-        log_obj["Discriminator night real loss"] = D_N_real_loss.mean().item(),
-        log_obj["Discriminator night fake loss"] = D_N_fake_loss.mean().item(),
-        log_obj["Discriminators combined loss"] = D_loss,
+        log_obj["Discriminator day real loss"] = D_D_real_loss.mean().item()
+        log_obj["Discriminator day fake loss"] = D_D_fake_loss.mean().item()
+        log_obj["Discriminator night real loss"] = D_N_real_loss.mean().item()
+        log_obj["Discriminator night fake loss"] = D_N_fake_loss.mean().item()
+        log_obj["Discriminators combined loss"] = D_loss.mean().item()
 
     wandb.log(log_obj)

@@ -111,7 +111,7 @@ def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1,
             # Generators and Discriminators
             gen_D, gen_N, disc_D, disc_N,
             # Discriminator losses
-            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred,
+            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
             # Generator losses
             G_D_loss=G_D_loss, G_N_loss=G_N_loss, G_D_cycle_loss=G_D_cycle_loss, G_N_cycle_loss=G_N_cycle_loss,
             G_loss=G_loss,
@@ -121,7 +121,7 @@ def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1,
         )
 
         # Print progress
-        if len(loader) % math.ceil(len(loader) / 10) == 0:
+        if idx % math.ceil(len(loader) / 10) == 0:
             print(f"Batch {idx} out of {len(loader)} completed")
 
 
@@ -228,7 +228,7 @@ def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_di
             # Generators and Discriminators
             gen_D, gen_N, disc_D, disc_N,
             # Discriminator losses
-            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred,
+            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
             # Generator losses
             G_D_loss=G_D_loss if gen_is_trained else None,
             G_N_loss=G_N_loss if gen_is_trained else None,
@@ -236,12 +236,11 @@ def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_di
             G_N_cycle_loss=G_N_cycle_loss if gen_is_trained else None,
             G_loss=G_loss if gen_is_trained else None,
             # CycleWGAN-gp specific losses
-            D_D_gradient_penalty=D_D_gradient_penalty, D_N_gradient_penalty=D_N_gradient_penalty, D_D_loss=D_D_loss,
-            D_N_loss=D_N_loss,
+            D_D_gradient_penalty=D_D_gradient_penalty, D_N_gradient_penalty=D_N_gradient_penalty
         )
 
         # Print progress
-        if len(loader) % math.ceil(len(loader) / 10) == 0:
+        if idx % math.ceil(len(loader) / 10) == 0:
             print(f"Batch {idx} out of {len(loader)} completed")
 
 
@@ -253,17 +252,16 @@ def main():
         f"Training started at {get_date_time(training_start_time)}, "
         f"{'' if use_ciconv else 'not '}using CIConv\n"
         "with settings:\n"
+        f"GENERATOR_CICONV: {use_ciconv_g}\n"
+        f"DISCRIMINATOR_CICONV: {use_ciconv_d}\n"
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
         f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
-        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE}\n"
-        # f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n" if use_cycle_wgan else ""
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
         f"LOAD_MODEL: {config.LOAD_MODEL}\n"
-        f"GENERATOR_CICONV: {use_ciconv_g}\n"
-        f"DISCRIMINATOR_CICONV: {use_ciconv_d}"
+        f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE}"
     )
     if use_cycle_wgan:
         print(f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n")
@@ -337,11 +335,11 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    if not (use_ciconv and use_cycle_wgan):
-        wandb.watch(
-            [gen_D, gen_N, disc_N, disc_D],
-            criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
-        )
+    # if not (use_ciconv and use_cycle_wgan):
+    wandb.watch(
+        [gen_D, gen_N, disc_N, disc_D],
+        criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
+    )
 
     # Training loop
     for epoch in range(config.NUM_EPOCHS):
@@ -388,6 +386,8 @@ if __name__ == "__main__":
     parser.add_argument("--l_cycle", type=int, help="Lambda cycle, if not given a default will be used")
     parser.add_argument("--l_gradient_pen", type=int,
                         help="Lambda gradient penalty, if not given a default will be used")
+    parser.add_argument("--dont_save", action='store_true', help="Add to not save model")
+    parser.add_argument("--dont_load", action='store_true', help="Add to not load model")
 
     # Parse arguments
     args = parser.parse_args()
@@ -399,17 +399,24 @@ if __name__ == "__main__":
     use_ciconv_g = args.ciconv_gen
     assert not (use_ciconv_g and use_ciconv_d)
     use_ciconv = use_ciconv_d or use_ciconv_g
-    if (lr_disc := args.lr_disc) is not None: config.LEARNING_RATE_DISC = lr_disc
-    if (lr_gen := args.lr_gen) is not None: config.LEARNING_RATE_GEN = lr_gen
-    if (batch_size := args.batch_size) is not None: config.BATCH_SIZE = batch_size
-    if (num_epochs := args.num_epochs) is not None: config.NUM_EPOCHS = num_epochs
-    train_output_path_tail = file_tail if (file_tail := args.file_tail) is not None else "test"
-    if (l_cycle := args.l_cycle) is not None:
+    if args.lr_disc is not None:
+        config.LEARNING_RATE_DISC = args.lr_disc
+    if args.lr_gen is not None:
+        config.LEARNING_RATE_GEN = args.lr_gen
+    if args.batch_size is not None:
+        config.BATCH_SIZE = args.batch_size
+    if args.num_epochs is not None:
+        config.NUM_EPOCHS = args.num_epochs
+    train_output_path_tail = args.file_tail if args.file_tail is not None else "test"
+    if args.l_cycle is not None:
         if use_cycle_wgan:
-            config.LAMBDA_CYCLE_W = l_cycle
+            config.LAMBDA_CYCLE_W = args.l_cycle
         else:
-            config.LAMBDA_CYCLE = l_cycle
-    if (l_gradient_pen := args.l_gradient_pen) is not None: config.LAMBDA_GRADIENT_PENALTY = l_gradient_pen
+            config.LAMBDA_CYCLE = args.l_cycle
+    if args.l_gradient_pen is not None:
+        config.LAMBDA_GRADIENT_PENALTY = args.l_gradient_pen
+    config.SAVE_MODEL = not args.dont_save
+    config.LOAD_MODEL = not args.dont_load
 
     # Define wandb config object
     config_obj = {
@@ -429,7 +436,7 @@ if __name__ == "__main__":
     wandb.login(key=env.WANDB_KEY)
     wandb.init(
         project=("day2night-cycle-wgan" if use_cycle_wgan else "day2night-cycle-gan"),
-        entity="tstreefkerk",
+        entity=env.WANDB_ENTITY,
         config=config_obj
     )
 

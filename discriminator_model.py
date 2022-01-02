@@ -25,7 +25,7 @@ class Discriminator(nn.Module):
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             in_channels = 1
         self.initial = nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect")
-        self.first_leaky = nn.LeakyReLU(0.2, inplace=True)
+        self.leaky = nn.LeakyReLU(0.2, inplace=True)
 
         layers = []
         in_channels = features[0]
@@ -39,7 +39,7 @@ class Discriminator(nn.Module):
         if self.use_ciconv:
             x = self.ciconv(x)
         x = self.initial(x)
-        x = self.first_leaky(x)
+        x = self.leaky(x)
         x = self.model(x)
         if self.use_cycle_wgan:
             return x

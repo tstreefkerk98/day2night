@@ -38,11 +38,9 @@ class Generator(nn.Module):
         if self.use_ciconv:
             self.ciconv = CIConv2d('W', k=3, scale=0.0)
             img_channels = 1
-        self.initial = nn.Sequential(
-            nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
-            nn.InstanceNorm2d(num_features),
-            nn.ReLU(inplace=True),
-        )
+        self.initial = nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect")
+        self.normalize = nn.InstanceNorm2d(num_features)
+        self.leaky = nn.ReLU(inplace=True)
         self.down_blocks = nn.ModuleList([
             ConvBlock(num_features, num_features * 2, kernel_size=3, stride=2, padding=1),
             ConvBlock(num_features * 2, num_features * 4, kernel_size=3, stride=2, padding=1),
@@ -61,6 +59,7 @@ class Generator(nn.Module):
         if self.use_ciconv:
             x = self.ciconv(x)
         x = self.initial(x)
+        x = self.normalize(self.leaky(x))
         for layer in self.down_blocks:
             x = layer(x)
         x = self.res_blocks(x)
