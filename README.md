@@ -41,3 +41,18 @@ A large part of the code has been copied from these sources and altered to fit t
 	langid = {english}
 }
 ```
+
+The CIConv layer (`ciconv2d.py`) is copied from:
+```
+@article{lengyel_zero-shot_2021,
+	title = {Zero-Shot Day-Night Domain Adaptation with a Physics Prior},
+	url = {http://arxiv.org/abs/2108.05137},
+	journaltitle = {{arXiv}:2108.05137 [cs]},
+	author = {Lengyel, Attila and Garg, Sourav and Milford, Michael and van Gemert, Jan C.},
+	urldate = {2021-11-18},
+	date = {2021-10-11},
+	eprinttype = {arxiv},
+	eprint = {2108.05137},
+	keywords = {Computer Science - Computer Vision and Pattern Recognition},
+}
+```
