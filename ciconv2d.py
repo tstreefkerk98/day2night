@@ -20,6 +20,7 @@ import torch.nn.functional as F
 # ======== Gaussian filter =========
 # ==================================
 
+
 def gaussian_basis_filters(scale, gpu, k=3):
     std = torch.pow(2, scale)
 
@@ -112,9 +113,13 @@ inv_switcher = {
 
 
 class CIConv2d(nn.Module):
-    def __init__(self, invariant, k=3, scale=0.0):
+    def __init__(self, invariant, k=3, scale=0.0, clamp_W=None):
         super(CIConv2d, self).__init__()
         assert invariant in ['E', 'H', 'N', 'W', 'C'], 'invalid invariant'
+
+        self.clamp_W = clamp_W
+        self.inv_out = 0.0
+
         self.inv_function = inv_switcher[invariant]
 
         self.use_cuda = torch.cuda.is_available()
@@ -151,6 +156,9 @@ class CIConv2d(nn.Module):
         Ell, Ellx, Elly = torch.split(Ell_out, 1, dim=1)
 
         inv_out = self.inv_function(E, Ex, Ey, El, Elx, Ely, Ell, Ellx, Elly)
-        inv_out = F.instance_norm(torch.log(inv_out + eps))
+        if self.clamp_W:
+            inv_out = torch.clamp(inv_out, min=eps, max=self.clamp_W)
+        self.inv_out = inv_out
+        inv_out = F.instance_norm(torch.log(inv_out))
 
         return inv_out

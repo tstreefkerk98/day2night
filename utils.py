@@ -153,6 +153,8 @@ def log_training_statistics(
         log_obj["Discriminator day CIConv gradient"] = disc_D.ciconv.scale.grad.mean().item()
         log_obj["Discriminator night CIConv gradient abs"] = torch.abs(disc_N.ciconv.scale.grad).mean().item()
         log_obj["Discriminator day CIConv gradient abs"] = torch.abs(disc_D.ciconv.scale.grad).mean().item()
+        log_obj["Discriminator night W(x) abs"] = torch.abs(disc_N.ciconv.inv_out).mean().item()
+        log_obj["Discriminator day W(x) abs"] = torch.abs(disc_D.ciconv.inv_out).mean().item()
 
     elif use_ciconv_g:
         log_obj["Generator night CIConv scale"] = gen_N.ciconv.scale.item()
@@ -161,6 +163,8 @@ def log_training_statistics(
         log_obj["Generator day CIConv gradient"] = gen_D.ciconv.scale.grad.mean().item()
         log_obj["Generator night CIConv gradient abs"] = torch.abs(gen_N.ciconv.scale.grad).mean().item()
         log_obj["Generator day CIConv gradient abs"] = torch.abs(gen_D.ciconv.scale.grad).mean().item()
+        log_obj["Generator night W(x) abs"] = torch.abs(gen_N.ciconv.inv_out).mean().item()
+        log_obj["Generator day W(x) abs"] = torch.abs(gen_D.ciconv.inv_out).mean().item()
 
     # CycleWGAN-gp specific losses
     if all([D_D_gradient_penalty, D_N_gradient_penalty]):

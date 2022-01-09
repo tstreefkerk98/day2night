@@ -30,7 +30,7 @@ def get_disc_cycle_gan_losses(disc, mse, real, fake):
         disc_fake_pred_mean = disc_fake_pred.mean().item()
 
         disc_real_loss = mse(disc_real_pred, torch.ones_like(disc_real_pred))
-        # One sided label smoothing Discriminator Night
+        # One sided label smoothing Discriminator
         if disc_real_loss.mean().item() < 0.1:
             disc_real_loss = mse(disc_real_pred, torch.full_like(disc_real_pred, 0.9))
         disc_fake_loss = mse(disc_fake_pred, torch.zeros_like(disc_fake_pred))
@@ -261,15 +261,18 @@ def main():
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
         f"LOAD_MODEL: {config.LOAD_MODEL}\n"
+        f"CLAMP_W: {clamp_W}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE}"
     )
     if use_cycle_wgan:
         print(f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n")
 
-    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan).to(config.DEVICE)
-    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan).to(config.DEVICE)
-    gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
-    gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g).to(config.DEVICE)
+    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan, clamp_W=clamp_W).to(
+        config.DEVICE)
+    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan, clamp_W=clamp_W).to(
+        config.DEVICE)
+    gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g, clamp_W=clamp_W).to(config.DEVICE)
+    gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g, clamp_W=clamp_W).to(config.DEVICE)
 
     # Initialise optimizers
     if use_cycle_wgan:
@@ -388,6 +391,7 @@ if __name__ == "__main__":
                         help="Lambda gradient penalty, if not given a default will be used")
     parser.add_argument("--dont_save", action='store_true', help="Add to not save model")
     parser.add_argument("--dont_load", action='store_true', help="Add to not load model")
+    parser.add_argument("--clamp_W", type=float, help="Clamp boundary for W, if not given W will not be clamped")
 
     # Parse arguments
     args = parser.parse_args()
@@ -417,6 +421,7 @@ if __name__ == "__main__":
         config.LAMBDA_GRADIENT_PENALTY = args.l_gradient_pen
     config.SAVE_MODEL = not args.dont_save
     config.LOAD_MODEL = not args.dont_load
+    clamp_W = args.clamp_W
 
     # Define wandb config object
     config_obj = {

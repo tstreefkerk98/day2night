@@ -17,12 +17,13 @@ class Block(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=False, use_cycle_wgan=False):
+    def __init__(self, in_channels=3, features=[64, 128, 256, 512], use_ciconv=False, use_cycle_wgan=False,
+                 clamp_W=None):
         super().__init__()
         self.use_ciconv = use_ciconv
         self.use_cycle_wgan = use_cycle_wgan
         if use_ciconv:
-            self.ciconv = CIConv2d('W', k=3, scale=0.0)
+            self.ciconv = CIConv2d('W', k=3, scale=0.0, clamp_W=clamp_W)
             in_channels = 1
         self.initial = nn.Conv2d(in_channels, features[0], kernel_size=4, stride=2, padding=1, padding_mode="reflect")
         self.leaky = nn.LeakyReLU(0.2, inplace=True)
