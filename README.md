@@ -42,7 +42,7 @@ A large part of the code has been copied from these sources and altered to fit t
 }
 ```
 
-The CIConv layer (`ciconv2d.py`) is copied from:
+The CIConv layer (`ciconv2d.py`) is a slightly altered version of the original CIConv layer from:
 ```
 @article{lengyel_zero-shot_2021,
 	title = {Zero-Shot Day-Night Domain Adaptation with a Physics Prior},
