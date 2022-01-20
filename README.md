@@ -8,6 +8,7 @@ replace the required fields with your own credentials.
 ### Folder structure and training set
 
 Before training, add the following folder structure:
+
 ```
 root
     | - ciconv
@@ -28,8 +29,8 @@ root
 Day-time data used during training: CityScapes <br>
 Night-time data used during training: DarkZurich
 
-For training, add CityScapes to `data/train/day` and DarkZurich to `data/train/night`.
-Test data similarly goes in `data/test/` folder.
+For training, add CityScapes to `data/train/day` and DarkZurich to `data/train/night`. Test data similarly goes
+in `data/test/` folder.
 
 ### Training
 
@@ -41,7 +42,21 @@ To view more options, run `python train.py -h`
 
 ### References
 
-A large part of the code has been copied from these sources and altered to fit the day-night domain.
+A large part of the code has been copied from the following source and altered to fit the day-night domain:
+
+```
+@misc{Persson2021,
+  author = {Persson, A.},
+  title = {CycleGAN},
+  year = {2021},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/aladdinpersson/Machine-Learning-Collection/tree/master/ML/Pytorch/GANs/CycleGAN}},
+  commit = {8cbaf3ebc3345dc89c070e18d98e0cc6cab7fb7e}
+}
+```
+
+This code is based on the following paper:
 
 ```
 @inproceedings{CycleGAN2017,
@@ -51,6 +66,8 @@ A large part of the code has been copied from these sources and altered to fit t
   year={2017}
 }
 ```
+
+The code has been extended according to:
 
 ```
 @article{hu_improved_nodate,
@@ -62,6 +79,7 @@ A large part of the code has been copied from these sources and altered to fit t
 ```
 
 The CIConv layer (`ciconv2d.py`) is a slightly altered version of the original CIConv layer from:
+
 ```
 @article{lengyel_zero-shot_2021,
 	title = {Zero-Shot Day-Night Domain Adaptation with a Physics Prior},
