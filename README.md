@@ -5,12 +5,31 @@
 Weight and Biases (wandb) is used to log the training sessions. To use this, rename `env.example.py` to `env.py` and
 replace the required fields with your own credentials.
 
-### Training set
+### Folder structure and training set
+
+Before training, add the following folder structure:
+```
+root
+    | - ciconv
+    |   - checkpoints
+    |   - saved_images_ciconv
+    | - no_ciconv
+    |   - checkpoints
+    |   - saved_images_no_ciconv
+    | - data
+    |   - test
+    |       - day
+    |       - night
+    |   - train
+    |       - day
+    |       - night
+```
 
 Day-time data used during training: CityScapes <br>
 Night-time data used during training: DarkZurich
 
 For training, add CityScapes to `data/train/day` and DarkZurich to `data/train/night`.
+Test data similarly goes in `data/test/` folder.
 
 ### Training
 
