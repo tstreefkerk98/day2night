@@ -73,7 +73,7 @@ def train_gen_cycle_gan(disc_D, disc_N, gen_D, gen_N, opt_gen, g_scaler, mse, l1
 
 
 def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, base_path,
-                    epoch):
+                    epoch, scheduler_opt_disc, scheduler_opt_gen):
     for idx, (day, night) in enumerate(loader):
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
@@ -103,26 +103,32 @@ def train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, l1,
                                 fake_night)
 
         # Save images
-        save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
+        if config.SAVE_MODEL:
+            save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
 
         # Log training statistics
-        log_training_statistics(
-            use_ciconv_d, use_ciconv_g,
-            # Generators and Discriminators
-            gen_D, gen_N, disc_D, disc_N,
-            # Discriminator losses
-            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
-            # Generator losses
-            G_D_loss=G_D_loss, G_N_loss=G_N_loss, G_D_cycle_loss=G_D_cycle_loss, G_N_cycle_loss=G_N_cycle_loss,
-            G_loss=G_loss,
-            # CycleGAN specific losses
-            D_D_real_loss=D_D_real_loss, D_D_fake_loss=D_D_fake_loss, D_N_real_loss=D_N_real_loss,
-            D_N_fake_loss=D_N_fake_loss, D_loss=D_loss
-        )
+        if config.LOG_TRAINING:
+            log_training_statistics(
+                use_ciconv_d, use_ciconv_g,
+                # Generators and Discriminators
+                gen_D, gen_N, disc_D, disc_N,
+                # Discriminator losses
+                D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
+                # Generator losses
+                G_D_loss=G_D_loss, G_N_loss=G_N_loss, G_D_cycle_loss=G_D_cycle_loss, G_N_cycle_loss=G_N_cycle_loss,
+                G_loss=G_loss,
+                # CycleGAN specific losses
+                D_D_real_loss=D_D_real_loss, D_D_fake_loss=D_D_fake_loss, D_N_real_loss=D_N_real_loss,
+                D_N_fake_loss=D_N_fake_loss, D_loss=D_loss
+            )
 
         # Print progress
         if idx % math.ceil(len(loader) / 10) == 0:
             print(f"Batch {idx} out of {len(loader)} completed")
+
+        if config.LEARNING_RATE_DECAY:
+            scheduler_opt_disc.step()
+            scheduler_opt_gen.step()
 
 
 # --------------------------------------------------------------------------------------------------- Train CycleGAN End
@@ -195,7 +201,7 @@ def compute_gradient_penalty(disc, real_images, fake_images):
 
 
 def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, l1, mse, d_scaler,
-                        g_scaler, base_path, epoch):
+                        g_scaler, base_path, epoch, scheduler_opt_disc_N, scheduler_opt_disc_D, scheduler_opt_gen):
     for idx, (day, night) in enumerate(loader):
         day = day.to(config.DEVICE)
         night = night.to(config.DEVICE)
@@ -220,28 +226,35 @@ def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_di
             gen_is_trained = True
 
         # Save images
-        save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
+        if config.SAVE_MODEL:
+            save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail)
 
         # noinspection PyUnboundLocalVariable
-        log_training_statistics(
-            use_ciconv_d, use_ciconv_g,
-            # Generators and Discriminators
-            gen_D, gen_N, disc_D, disc_N,
-            # Discriminator losses
-            D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
-            # Generator losses
-            G_D_loss=G_D_loss if gen_is_trained else None,
-            G_N_loss=G_N_loss if gen_is_trained else None,
-            G_D_cycle_loss=G_D_cycle_loss if gen_is_trained else None,
-            G_N_cycle_loss=G_N_cycle_loss if gen_is_trained else None,
-            G_loss=G_loss if gen_is_trained else None,
-            # CycleWGAN-gp specific losses
-            D_D_gradient_penalty=D_D_gradient_penalty, D_N_gradient_penalty=D_N_gradient_penalty
-        )
+        if config.LOG_TRAINING:
+            log_training_statistics(
+                use_ciconv_d, use_ciconv_g,
+                # Generators and Discriminators
+                gen_D, gen_N, disc_D, disc_N,
+                # Discriminator losses
+                D_D_real_pred, D_D_fake_pred, D_N_real_pred, D_N_fake_pred, D_D_loss, D_N_loss,
+                # Generator losses
+                G_D_loss=G_D_loss if gen_is_trained else None,
+                G_N_loss=G_N_loss if gen_is_trained else None,
+                G_D_cycle_loss=G_D_cycle_loss if gen_is_trained else None,
+                G_N_cycle_loss=G_N_cycle_loss if gen_is_trained else None,
+                G_loss=G_loss if gen_is_trained else None,
+                # CycleWGAN-gp specific losses
+                D_D_gradient_penalty=D_D_gradient_penalty, D_N_gradient_penalty=D_N_gradient_penalty
+            )
 
         # Print progress
         if idx % math.ceil(len(loader) / 10) == 0:
             print(f"Batch {idx} out of {len(loader)} completed")
+
+        if config.LEARNING_RATE_DECAY:
+            scheduler_opt_disc_N.step()
+            scheduler_opt_disc_D.step()
+            scheduler_opt_gen.step()
 
 
 # ----------------------------------------------------------------------------------------------- Train CycleWGAN-GP End
@@ -257,24 +270,48 @@ def main():
         f"BATCH_SIZE: {config.BATCH_SIZE}\n"
         f"LEARNING_RATE_G: {config.LEARNING_RATE_GEN}\n"
         f"LEARNING_RATE_D: {config.LEARNING_RATE_DISC}\n"
+        f"LEARNING_RATE_DECAY: {config.LEARNING_RATE_DECAY}\n"
         f"NUM_WORKERS: {config.NUM_WORKERS}\n"
         f"NUM_EPOCHS: {config.NUM_EPOCHS}\n"
         f"SAVE_MODEL: {config.SAVE_MODEL}\n"
         f"LOAD_MODEL: {config.LOAD_MODEL}\n"
-        f"CLAMP_W: {clamp_W}\n"
+        f"LOG_TRAINING: {config.LOG_TRAINING}\n"
+        f"CLAMP_W: {config.CLAMP_W}\n"
         f"LAMBDA_CYCLE: {config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE}"
     )
     if use_cycle_wgan:
         print(f"LAMBDA_GRADIENT_PENALTY: {config.LAMBDA_GRADIENT_PENALTY}\n")
 
-    disc_N = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan, clamp_W=clamp_W).to(
-        config.DEVICE)
-    disc_D = Discriminator(in_channels=3, use_ciconv=use_ciconv_d, use_cycle_wgan=use_cycle_wgan, clamp_W=clamp_W).to(
-        config.DEVICE)
-    gen_D = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g, clamp_W=clamp_W).to(config.DEVICE)
-    gen_N = Generator(img_channels=3, num_residuals=9, use_ciconv=use_ciconv_g, clamp_W=clamp_W).to(config.DEVICE)
+    disc_N = Discriminator(
+        in_channels=3,
+        use_ciconv=use_ciconv_d,
+        use_cycle_wgan=use_cycle_wgan,
+        clamp_W=config.CLAMP_W
+    ).to(config.DEVICE)
+    disc_D = Discriminator(
+        in_channels=3,
+        use_ciconv=use_ciconv_d,
+        use_cycle_wgan=use_cycle_wgan,
+        clamp_W=config.CLAMP_W
+    ).to(config.DEVICE)
+
+    gen_D = Generator(
+        img_channels=3,
+        num_residuals=9,
+        use_ciconv=use_ciconv_g,
+        clamp_W=config.CLAMP_W
+    ).to(config.DEVICE)
+    gen_N = Generator(
+        img_channels=3,
+        num_residuals=9,
+        use_ciconv=use_ciconv_g,
+        clamp_W=config.CLAMP_W
+    ).to(config.DEVICE)
 
     # Initialise optimizers
+    if config.LEARNING_RATE_DECAY:
+        gamma_disc = (config.LEARNING_RATE_DECAY / config.LEARNING_RATE_DISC) ** (1 / config.NUM_EPOCHS)
+        gamma_gen = (config.LEARNING_RATE_DECAY / config.LEARNING_RATE_GEN) ** (1 / config.NUM_EPOCHS)
     if use_cycle_wgan:
         opt_disc_N = optim.Adam(
             list(disc_N.parameters()),
@@ -286,17 +323,30 @@ def main():
             lr=config.LEARNING_RATE_DISC,
             betas=(0.5, 0.999),
         )
+        scheduler_opt_disc_N, scheduler_opt_disc_D = None, None
+        if config.LEARNING_RATE_DECAY:
+            # noinspection PyUnboundLocalVariable
+            scheduler_opt_disc_N = optim.lr_scheduler.ExponentialLR(opt_disc_N, gamma=gamma_disc)
+            scheduler_opt_disc_D = optim.lr_scheduler.ExponentialLR(opt_disc_D, gamma=gamma_disc)
     else:
         opt_disc = optim.Adam(
             list(disc_N.parameters()) + list(disc_D.parameters()),
             lr=config.LEARNING_RATE_DISC,
             betas=(0.5, 0.999),
         )
+        scheduler_opt_disc = None
+        if config.LEARNING_RATE_DECAY:
+            # noinspection PyUnboundLocalVariable
+            scheduler_opt_disc = optim.lr_scheduler.ExponentialLR(opt_disc, gamma=gamma_disc)
     opt_gen = optim.Adam(
         list(gen_D.parameters()) + list(gen_N.parameters()),
         lr=config.LEARNING_RATE_GEN,
         betas=(0.5, 0.999),
     )
+    scheduler_opt_gen = None
+    if config.LEARNING_RATE_DECAY:
+        # noinspection PyUnboundLocalVariable
+        scheduler_opt_gen = optim.lr_scheduler.ExponentialLR(opt_gen, gamma=gamma_gen)
 
     # Error functions
     L1 = nn.L1Loss()
@@ -338,11 +388,11 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler = torch.cuda.amp.GradScaler()
 
-    # if not (use_ciconv and use_cycle_wgan):
-    wandb.watch(
-        [gen_D, gen_N, disc_N, disc_D],
-        criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
-    )
+    if config.LOG_TRAINING:
+        wandb.watch(
+            [gen_D, gen_N, disc_N, disc_D],
+            criterion=None, log="gradients", log_freq=math.ceil(len(loader) / 5), idx=None, log_graph=False
+        )
 
     # Training loop
     for epoch in range(config.NUM_EPOCHS):
@@ -353,11 +403,14 @@ def main():
 
         # Train model
         if use_cycle_wgan:
+            # noinspection PyUnboundLocalVariable
             train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_disc_D, opt_gen, L1, mse,
-                                d_scaler, g_scaler, base_path, epoch)
+                                d_scaler, g_scaler, base_path, epoch, scheduler_opt_disc_N, scheduler_opt_disc_D,
+                                scheduler_opt_gen)
         else:
+            # noinspection PyUnboundLocalVariable
             train_cycle_gan(disc_N, disc_D, gen_D, gen_N, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler,
-                            base_path, epoch)
+                            base_path, epoch, scheduler_opt_disc, scheduler_opt_gen)
 
         # Print epoch duration
         print_duration(get_time() - time, "Epoch", progress)
@@ -384,6 +437,8 @@ if __name__ == "__main__":
                         help="Discriminator learning rate, if not given a default will be used")
     parser.add_argument("--batch_size", type=int, help="Batch size, if not given a default will be used")
     parser.add_argument("--num_epochs", type=int, help="Number of epochs, if not given a default will be used")
+    parser.add_argument("--lr_decay", type=float,
+                        help="Value of final learning rates, if not given, no decay will occur")
     parser.add_argument("--file_tail", type=str,
                         help="File tail (used for storing files), if not given a default will be used")
     parser.add_argument("--l_cycle", type=int, help="Lambda cycle, if not given a default will be used")
@@ -391,6 +446,7 @@ if __name__ == "__main__":
                         help="Lambda gradient penalty, if not given a default will be used")
     parser.add_argument("--dont_save", action='store_true', help="Add to not save model")
     parser.add_argument("--dont_load", action='store_true', help="Add to not load model")
+    parser.add_argument("--dont_log", action='store_true', help="Add to not log training statistics")
     parser.add_argument("--clamp_W", type=float, help="Clamp boundary for W, if not given W will not be clamped")
 
     # Parse arguments
@@ -403,46 +459,45 @@ if __name__ == "__main__":
     use_ciconv_g = args.ciconv_gen
     assert not (use_ciconv_g and use_ciconv_d)
     use_ciconv = use_ciconv_d or use_ciconv_g
-    if args.lr_disc is not None:
-        config.LEARNING_RATE_DISC = args.lr_disc
-    if args.lr_gen is not None:
-        config.LEARNING_RATE_GEN = args.lr_gen
-    if args.batch_size is not None:
-        config.BATCH_SIZE = args.batch_size
-    if args.num_epochs is not None:
-        config.NUM_EPOCHS = args.num_epochs
+    if args.lr_disc is not None: config.LEARNING_RATE_DISC = args.lr_disc
+    if args.lr_gen is not None: config.LEARNING_RATE_GEN = args.lr_gen
+    if args.batch_size is not None: config.BATCH_SIZE = args.batch_size
+    if args.num_epochs is not None: config.NUM_EPOCHS = args.num_epochs
+    if args.lr_decay is not None: config.LEARNING_RATE_DECAY = args.lr_decay
+    if args.clamp_W is not None: config.CLAMP_W = args.clamp_W
     train_output_path_tail = args.file_tail if args.file_tail is not None else "test"
     if args.l_cycle is not None:
         if use_cycle_wgan:
             config.LAMBDA_CYCLE_W = args.l_cycle
         else:
             config.LAMBDA_CYCLE = args.l_cycle
-    if args.l_gradient_pen is not None:
-        config.LAMBDA_GRADIENT_PENALTY = args.l_gradient_pen
+    if args.l_gradient_pen is not None: config.LAMBDA_GRADIENT_PENALTY = args.l_gradient_pen
     config.SAVE_MODEL = not args.dont_save
     config.LOAD_MODEL = not args.dont_load
-    clamp_W = args.clamp_W
+    config.LOG_TRAINING = not args.dont_log
 
     # Define wandb config object
-    config_obj = {
-        "ciconv_d": use_ciconv_d,
-        "ciconv_g": use_ciconv_g,
-        "learning_rate_d": config.LEARNING_RATE_DISC,
-        "learning_rate_g": config.LEARNING_RATE_GEN,
-        "lambda_cycle": config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE,
-        "epochs": config.NUM_EPOCHS,
-        "batch_size": config.BATCH_SIZE,
-        "file_extension": train_output_path_tail
-    }
-    if use_cycle_wgan:
-        config_obj["lambda_gradient_penalty"] = config.LAMBDA_GRADIENT_PENALTY
+    if config.LOG_TRAINING:
+        config_obj = {
+            "ciconv_d": use_ciconv_d,
+            "ciconv_g": use_ciconv_g,
+            "learning_rate_d": config.LEARNING_RATE_DISC,
+            "learning_rate_g": config.LEARNING_RATE_GEN,
+            "learning_rate_decay": config.LEARNING_RATE_DECAY,
+            "lambda_cycle": config.LAMBDA_CYCLE_W if use_cycle_wgan else config.LAMBDA_CYCLE,
+            "epochs": config.NUM_EPOCHS,
+            "batch_size": config.BATCH_SIZE,
+            "file_extension": train_output_path_tail
+        }
+        if use_cycle_wgan:
+            config_obj["lambda_gradient_penalty"] = config.LAMBDA_GRADIENT_PENALTY
 
-    # Login and initialise wandb
-    wandb.login(key=env.WANDB_KEY)
-    wandb.init(
-        project=("day2night-cycle-wgan" if use_cycle_wgan else "day2night-cycle-gan"),
-        entity=env.WANDB_ENTITY,
-        config=config_obj
-    )
+        # Login and initialise wandb
+        wandb.login(key=env.WANDB_KEY)
+        wandb.init(
+            project=("day2night-cycle-wgan" if use_cycle_wgan else "day2night-cycle-gan"),
+            entity=env.WANDB_ENTITY,
+            config=config_obj
+        )
 
     main()
