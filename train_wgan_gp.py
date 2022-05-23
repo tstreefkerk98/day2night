@@ -95,7 +95,7 @@ def train_cycle_wgan_gp(disc_N, disc_D, gen_D, gen_N, loader, opt_disc_N, opt_di
 
         # Train Generators (once every x batches)
         gen_is_trained = False
-        if idx % 5 == 0:
+        if idx % 5 == 0 and idx != 0:
             G_D_loss, G_N_loss, G_D_cycle_loss, G_N_cycle_loss, G_loss = \
                 train_gen_cycle_wgan_gp(gen_D, gen_N, disc_N, disc_D, night, fake_night, day, fake_day, l1, opt_gen,
                                         g_scaler)
