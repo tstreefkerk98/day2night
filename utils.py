@@ -47,7 +47,7 @@ def seed_everything(seed=42):
 
 def save_images(idx, loader, epoch, fake_day, fake_night, base_path, train_output_path_tail):
     if idx % math.ceil(len(loader) / 5) == 0 or idx + 1 == len(loader):
-        current_epoch = config.CURRENT_EPOCH + epoch
+        current_epoch = str(config.CURRENT_EPOCH + epoch).zfill(len(str(config.NUM_EPOCHS)))
         save_image(fake_day * 0.5 + 0.5,
                    f"{base_path}/saved_images_{base_path}/{train_output_path_tail}_day_{current_epoch}_{idx}.png")
         save_image(fake_night * 0.5 + 0.5,
@@ -87,6 +87,16 @@ def print_duration(difference, task, progress):
     seconds = divmod(minutes[1], 1)
     print(f"{task}: {progress} took: {hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds")
 
+
+def get_duration(difference):
+    duration_in_s = difference.total_seconds()
+    hours = divmod(duration_in_s, 3600)
+    minutes = divmod(hours[1], 60)
+    seconds = divmod(minutes[1], 1)
+    return f"{hours[0]} hours, {minutes[0]} minutes, {seconds[0]} seconds"
+
+def dir_size(path):
+    return len(os.listdir(path))
 
 def format_value(val, size):
     val = str(val)

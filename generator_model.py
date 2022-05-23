@@ -32,7 +32,7 @@ class ResidualBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, img_channels, num_features=64, num_residuals=9, use_ciconv=False, clamp_W=None):
+    def __init__(self, img_channels, num_features=64, num_residuals=9, use_ciconv=False, clamp_W=None, out_channels=3):
         super().__init__()
         self.use_ciconv = use_ciconv
         if self.use_ciconv:
@@ -53,7 +53,7 @@ class Generator(nn.Module):
                       output_padding=1),
         ])
 
-        self.last = nn.Conv2d(num_features * 1, 3, kernel_size=7, stride=1, padding=3, padding_mode="reflect")
+        self.last = nn.Conv2d(num_features * 1, out_channels, kernel_size=7, stride=1, padding=3, padding_mode="reflect")
 
     def forward(self, x):
         if self.use_ciconv:

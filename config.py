@@ -19,6 +19,7 @@ CURRENT_EPOCH = 0
 SAVE_MODEL = True
 LOAD_MODEL = True
 LOG_TRAINING = True
+USE_ARCHITECTURE_B = False
 CHECKPOINT_GEN_N = "genn.pth.tar"
 CHECKPOINT_GEN_D = "gend.pth.tar"
 CHECKPOINT_CRITIC_N = "criticn.pth.tar"

@@ -143,7 +143,9 @@ ciconv/checkpoints/*
 no_ciconv/training_outputs/*
 ciconv/training_outputs/*
 
-generate_images.py
+generate_images_old.py
+generate_images/*
+checkpoint_file_backups/*
 wandb_torch.py
 
 tools/*
