@@ -22,7 +22,7 @@ def train_disc_cycle_wgan_gp(disc, real, fake, opt_disc, d_scaler):
         disc_loss = disc_real_pred_mean + disc_fake_pred_mean + disc_gradient_penalty
 
     opt_disc.zero_grad()
-    d_scaler.scale(disc_loss).backward()
+    d_scaler.scale(disc_loss).backward(retain_graph=True)
     d_scaler.step(opt_disc)
     d_scaler.update()
 
@@ -52,7 +52,7 @@ def train_gen_cycle_wgan_gp(gen_D, gen_N, disc_N, disc_D, night, fake_night, day
         )
 
     opt_gen.zero_grad()
-    g_scaler.scale(G_loss).backward()
+    g_scaler.scale(G_loss).backward(retain_graph=True)
     g_scaler.step(opt_gen)
     g_scaler.update()
 
